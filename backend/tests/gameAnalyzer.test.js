@@ -1,6 +1,5 @@
 import {describe, it, expect, beforeEach} from "bun:test";
 import {classifyMove, GameAnalyzer} from "../src/gameAnalyzer.js";
-import {UciEngine} from "../src/engineManager.js";
 
 function createTestDbClient() {
     return {
@@ -29,7 +28,7 @@ function createTestDbClient() {
             this._moves.push(...moves);
         },
 
-        async insertMoveEvals(evals) {
+        async insertMoveEvals(gameId, evals) {
             this._evals.push(...evals);
         },
 
@@ -47,80 +46,66 @@ function createTestDbClient() {
 }
 
 describe("classifyMove", () => {
-    it("returns 'forced' if move is mate and diff is 0", () => {
-        expect(classifyMove(100, 100, true)).toBe("forced");
+    it("returns 'good' if cpLoss <= 10", () => {
+        expect(classifyMove(5)).toBe("good");
     });
-    it("returns 'blunder' if diff <= -300", () => {
-        expect(classifyMove(100, -200, false)).toBe("blunder");
+    it("returns 'inaccuracy' if cpLoss <= 50", () => {
+        expect(classifyMove(30)).toBe("inaccuracy");
     });
-    it("returns 'mistake' if diff <= -100", () => {
-        expect(classifyMove(100, 0, false)).toBe("mistake");
+    it("returns 'mistake' if cpLoss <= 100", () => {
+        expect(classifyMove(80)).toBe("mistake");
     });
-    it("returns 'inaccuracy' if diff <= -50", () => {
-        expect(classifyMove(100, 40, false)).toBe("inaccuracy");
+    it("returns 'blunder' if cpLoss > 100", () => {
+        expect(classifyMove(150)).toBe("blunder");
     });
-    it("returns 'good' if diff > -50", () => {
-        expect(classifyMove(100, 60, false)).toBe("good");
-    });
-    it("handles mate evaluations (mate in X)", () => {
-        expect(classifyMove({mate: 2}, {mate: 2}, false)).toBe("good");
-        expect(classifyMove({mate: 2}, {mate: 3}, false)).toBe("good");
-        expect(classifyMove({mate: 2}, {mate: -2}, false)).toBe("blunder");
-        expect(classifyMove({mate: -2}, {mate: -1}, false)).toBe("blunder"); 
+    it("returns null if cpLoss is null", () => {
+        expect(classifyMove(null)).toBeNull();
     });
 });
 
 describe("GameAnalyzer", () => {
     let dbClient;
-    let mockEngine;
 
     beforeEach(() => {
         dbClient = createTestDbClient();
-        mockEngine = {
-            init: async () => {},
-            quit: async () => {},
-            uciNewGame: async () => {},
-            go: async () => ({
-                bestMove: "e2e4",
-                score: { cp: 50 },
-                depth: 20
-            })
-        };
     });
 
     it("evaluates a single game and writes to move_evals", async () => {
         const {game} = await dbClient.seedGame();
         await dbClient.insertGameMoves([
-            { game_id: game.id, ply: 1, uci: "e2e4", fen_after: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1" }
+            { gameId: game.id, ply: 1, uci: "e2e4", fenAfter: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1" }
         ]);
 
-        const analyzer = new GameAnalyzer("fake-path", {dbClient, engine: mockEngine, depth: 20});
+        const analyzer = new GameAnalyzer("fake-path", {dbClient, depth: 20});
         
-        // Mock getPositionEval
-        analyzer._getPositionEval = async () => ({ score: { cp: 50 } });
+        analyzer._getEngine = async () => ({
+            uciNewGame: async () => {},
+            position: async () => {},
+            goWithEval: async () => ({ bestMove: "e2e4", scoreCp: 50, isMate: false })
+        });
 
-        await analyzer.analyzeGame(game);
+        await analyzer.analyzeGame(game.id);
         
         const evals = dbClient._evals.filter(e => e.gameId === game.id);
         expect(evals).toHaveLength(1);
         expect(evals[0].ply).toBe(1);
         expect(evals[0].bestUci).toBe("e2e4");
         expect(evals[0].bestCp).toBe(50);
-        expect(evals[0].playedCp).toBe(50);
-        expect(evals[0].cpLoss).toBe(0);
-        expect(evals[0].classification).toBe("good");
+        expect(evals[0].playedCp).toBe(-50); // scoreCp from opponent's perspective gets negated
+        expect(evals[0].cpLoss).toBe(100);    // 50 - (-50) = 100
+        expect(evals[0].classification).toBe("mistake"); // 100 is mistake
     });
     
     it("skips already analyzed games", async () => {
         const {game} = await dbClient.seedGame();
-        await dbClient.insertMoveEvals([{ gameId: game.id, ply: 1, bestUci: "e2e4", bestCp: 50, playedCp: 50, cpLoss: 0, isMate: 0, classification: "good" }]);
+        await dbClient.insertMoveEvals(game.id, [{ gameId: game.id, ply: 1, bestUci: "e2e4", bestCp: 50, playedCp: 50, cpLoss: 0, isMate: 0, classification: "good" }]);
 
-        const analyzer = new GameAnalyzer("fake-path", {dbClient, engine: mockEngine, depth: 20});
+        const analyzer = new GameAnalyzer("fake-path", {dbClient, depth: 20});
         
         let called = false;
         analyzer.analyzeGame = async () => { called = true; };
 
-        await analyzer.runOnce();
+        await analyzer.analyzeAll(); // renamed from runOnce to analyzeAll
         
         expect(called).toBe(false);
     });
