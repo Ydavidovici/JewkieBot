@@ -17,49 +17,23 @@ function rateLimitResponse(retryAfterSec) {
 let dbInserts = [];
 let dbUpdates = [];
 
-const mockDb = {
-    insert: (table) => ({
-        values: (data) => {
-            dbInserts.push({ table, data });
-            const p = Promise.resolve(undefined);
-            p.onConflictDoNothing = () => Promise.resolve();
-            p.returning = () => Promise.resolve([{ id: 42 }]);
-            return p;
-        },
-    }),
-    // Select chain must support both `.where(...)` (awaited directly, e.g.
-    // upsertPlayer) and `.where(...).limit(N)` (awaited, e.g. createDbGame's
-    // resume probe). Return a thenable that also exposes `.limit()`.
-    select: () => {
-        const chain = {
-            from: () => chain,
-            // By default treat the row as "not found" so createDbGame inserts
-            // a fresh row instead of taking the resume path. Tests that need
-            // the resume path can override mockDb.select.
-            where: () => {
-                const result = [];
-                const thenable = Promise.resolve([{ id: 1 }]);
-                thenable.limit = () => Promise.resolve(result);
-                return thenable;
-            },
-        };
-        return chain;
+const mockDbClient = {
+    createGame: async (payload) => {
+        dbInserts.push({ table: "PLAYERS", data: { name: payload.whiteUsername } });
+        dbInserts.push({ table: "PLAYERS", data: { name: payload.blackUsername } });
+        dbInserts.push({ table: "GAMES", data: payload });
+        return { id: 42 };
     },
-    update: (table) => ({
-        set: (data) => {
-            dbUpdates.push({ table, data });
-            return { where: () => Promise.resolve() };
-        },
-    }),
+    updateGame: async (id, payload) => {
+        dbUpdates.push({ table: "GAMES", data: payload });
+    },
+    getGameMoves: async () => [],
+    insertGameMoves: async (id, moves) => {
+        dbInserts.push({ table: "GAME_MOVES", data: moves });
+    }
 };
 
-mock.module("../db/db.js", () => ({ db: mockDb }));
-mock.module("../db/schema.js", () => ({
-    players: "PLAYERS",
-    games: "GAMES",
-    gameMoves: "GAME_MOVES",
-}));
-mock.module("drizzle-orm", () => ({ eq: () => ({}) }));
+mock.module("../src/dbClient.js", () => ({ dbClient: mockDbClient }));
 
 const { LichessBot, LichessRateLimited, normalizeMove, computeMoveTime, mapResult, extractTime } = await import("../src/lichessBot.js");
 
@@ -1029,7 +1003,7 @@ describe("DB integration", () => {
             const update = dbUpdates.find(u => u.data?.result === "1-0");
             expect(update).toBeDefined();
             expect(update.data).toMatchObject({ result: "1-0", termination: "mate" });
-            expect(update.data.finishedAt).toBeTruthy();
+            expect(update.data.finished_at).toBeTruthy();
         });
     });
 
@@ -1179,7 +1153,7 @@ describe("DB integration", () => {
             const u = dbUpdates.find(x => x.data?.termination === "aborted");
             expect(u).toBeDefined();
             expect(u.data.result).toBeNull();
-            expect(u.data.finishedAt).toBeTruthy();
+            expect(u.data.finished_at).toBeTruthy();
         });
     });
 

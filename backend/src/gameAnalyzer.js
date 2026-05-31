@@ -1,6 +1,4 @@
-import {db as defaultDb} from "../db/db.js";
-import {games, gameMoves, moveEvals} from "../db/schema.js";
-import {eq, isNull, avg, count, sql} from "drizzle-orm";
+import {dbClient as defaultDbClient} from "./dbClient.js";
 import {UciEngine} from "./engineManager.js";
 
 export function classifyMove(cpLoss) {
@@ -18,7 +16,7 @@ export class GameAnalyzer {
         this.depth      = options.depth      ?? 20;
         this.moveTimeMs = options.moveTimeMs ?? null;
         this.spawnFn    = options.spawnFn    ?? null;
-        this._db        = options.db         ?? defaultDb;
+        this._dbClient  = options.dbClient   ?? defaultDbClient;
         this._engine    = options.engine     ?? null; // injectable for tests
         this._running   = false;
         this._aborted   = false;
@@ -53,12 +51,7 @@ export class GameAnalyzer {
 
         try {
             // Find games that have no move_evals rows at all yet.
-            const unanalyzed = await this._db
-                .select({id: games.id})
-                .from(games)
-                .leftJoin(moveEvals, eq(moveEvals.gameId, games.id))
-                .where(isNull(moveEvals.id))
-                .groupBy(games.id);
+            const unanalyzed = await this._dbClient.getUnanalyzedGames();
 
             this.progress = {total: unanalyzed.length, done: 0, currentGameId: null};
 
@@ -77,11 +70,7 @@ export class GameAnalyzer {
     async analyzeGame(gameId) {
         const engine = await this._getEngine();
 
-        const moves = await this._db
-            .select()
-            .from(gameMoves)
-            .where(eq(gameMoves.gameId, gameId))
-            .orderBy(gameMoves.ply);
+        const moves = await this._dbClient.getGameMoves(gameId);
 
         if (moves.length === 0) return;
 
@@ -136,64 +125,11 @@ export class GameAnalyzer {
         }
 
         if (rows.length > 0) {
-            await this._db.insert(moveEvals).values(rows);
+            await this._dbClient.insertMoveEvals(gameId, rows);
         }
     }
 
     async getStats() {
-        const db = this._db;
-
-        const phaseExpr = sql`CASE WHEN ${moveEvals.ply} <= 20 THEN 'opening' WHEN ${moveEvals.ply} <= 60 THEN 'middlegame' ELSE 'endgame' END`;
-        const sideExpr  = sql`CASE WHEN ${moveEvals.ply} % 2 = 1 THEN 'white' ELSE 'black' END`;
-
-        const [overall] = await db.select({
-            gamesAnalyzed: sql`COUNT(DISTINCT ${moveEvals.gameId})`,
-            totalMoves:    count(moveEvals.id),
-            avgCpLoss:     avg(moveEvals.cpLoss),
-            blunders:      sql`SUM(CASE WHEN ${moveEvals.classification} = 'blunder'    THEN 1 ELSE 0 END)`,
-            mistakes:      sql`SUM(CASE WHEN ${moveEvals.classification} = 'mistake'    THEN 1 ELSE 0 END)`,
-            inaccuracies:  sql`SUM(CASE WHEN ${moveEvals.classification} = 'inaccuracy' THEN 1 ELSE 0 END)`,
-            goodMoves:     sql`SUM(CASE WHEN ${moveEvals.classification} = 'good'       THEN 1 ELSE 0 END)`,
-        }).from(moveEvals);
-
-        const byPhase = await db.select({
-            phase:      phaseExpr,
-            avgCpLoss:  avg(moveEvals.cpLoss),
-            blunders:   sql`SUM(CASE WHEN ${moveEvals.classification} = 'blunder' THEN 1 ELSE 0 END)`,
-            totalMoves: count(moveEvals.id),
-        }).from(moveEvals).groupBy(phaseExpr);
-
-        const bySide = await db.select({
-            side:      sideExpr,
-            avgCpLoss: avg(moveEvals.cpLoss),
-            blunders:  sql`SUM(CASE WHEN ${moveEvals.classification} = 'blunder' THEN 1 ELSE 0 END)`,
-        }).from(moveEvals).groupBy(sideExpr);
-
-        const byOpening = await db.select({
-            eco:         games.openingEco,
-            name:        games.openingName,
-            gamesPlayed: sql`COUNT(DISTINCT ${moveEvals.gameId})`,
-            avgCpLoss:   avg(moveEvals.cpLoss),
-            blunders:    sql`SUM(CASE WHEN ${moveEvals.classification} = 'blunder' THEN 1 ELSE 0 END)`,
-        })
-        .from(moveEvals)
-        .innerJoin(games, eq(games.id, moveEvals.gameId))
-        .where(sql`${games.openingEco} IS NOT NULL`)
-        .groupBy(games.openingEco)
-        .orderBy(sql`AVG(${moveEvals.cpLoss}) DESC`)
-        .limit(20);
-
-        const winLossCorrelation = await db.select({
-            result:    games.result,
-            avgCpLoss: avg(moveEvals.cpLoss),
-            blunders:  sql`SUM(CASE WHEN ${moveEvals.classification} = 'blunder' THEN 1 ELSE 0 END)`,
-            games:     sql`COUNT(DISTINCT ${moveEvals.gameId})`,
-        })
-        .from(moveEvals)
-        .innerJoin(games, eq(games.id, moveEvals.gameId))
-        .where(sql`${games.result} IS NOT NULL`)
-        .groupBy(games.result);
-
-        return {overall: overall ?? {}, byPhase, bySide, byOpening, winLossCorrelation};
+        return await this._dbClient.getStats();
     }
 }
