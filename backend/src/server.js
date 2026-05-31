@@ -372,7 +372,7 @@ if (import.meta.main) {
     const {app} = createApp({
         manager,
         lichessEngineFactory,
-        mainEnginePath: MY_ENGINE_PATH,
+        mainEnginePath: JEWKIEBOT_PATH,
         maxConcurrentGames: LICHESS_MAX_GAMES,
         notifier,
         analyzer
