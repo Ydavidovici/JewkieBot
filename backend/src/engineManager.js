@@ -87,12 +87,16 @@ export class UciEngine extends EventEmitter {
 
         const parts = ["go"];
         if (options.depth) parts.push(`depth ${options.depth}`);
-        if (options.whiteTime != null) parts.push(`wtime ${options.whiteTime}`);
-        if (options.blackTime != null) parts.push(`btime ${options.blackTime}`);
-        if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
-        if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
-        if (options.movesToGo != null) parts.push(`movestogo ${options.movesToGo}`);
-        if (options.moveTime) parts.push(`movetime ${options.moveTime}`);
+        
+        if (options.moveTime) {
+            parts.push(`movetime ${options.moveTime}`);
+        } else {
+            if (options.whiteTime != null) parts.push(`wtime ${options.whiteTime}`);
+            if (options.blackTime != null) parts.push(`btime ${options.blackTime}`);
+            if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
+            if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
+            if (options.movesToGo != null) parts.push(`movestogo ${options.movesToGo}`);
+        }
 
         // Watchdog must outlast the engine's worst-case think time. For a
         // fixed movetime that's the budget; for a real clock the engine caps a
