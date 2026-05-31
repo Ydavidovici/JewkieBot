@@ -62,9 +62,10 @@ async function tick(ms = 5) {
 
 async function quickStart(engine, spawnFn) {
     const startP = engine.start();
-    await tick();
+    await tick(5);
     const proc = spawnFn.processes[spawnFn.processes.length - 1];
     proc._pushLine("uciok");
+    await tick(10);
     proc._pushLine("readyok");
     await startP;
     return proc;
@@ -79,6 +80,15 @@ describe("UciEngine.start()", () => {
         expect(spawnFn).toHaveBeenCalledTimes(1);
         expect(engine.ready).toBe(true);
         expect(proc._stdinWrites).toEqual(["uci\n", "isready\n"]);
+    });
+
+    it("sends 'setoption name OwnBook value true' and 'setoption name BookFile value <bookPath>' if bookPath is configured", async () => {
+        const spawnFn = makeSpawnFn();
+        const engine = new UciEngine("/fake/engine", { spawnFn, handshakeTimeoutMs: 200, bookPath: "/some/book.bin" });
+        const proc = await quickStart(engine, spawnFn);
+
+        expect(proc._stdinWrites).toContain("setoption name OwnBook value true\n");
+        expect(proc._stdinWrites).toContain("setoption name BookFile value /some/book.bin\n");
     });
 
     it("throws when the spawned process has no pid", async () => {
@@ -197,7 +207,7 @@ describe("UciEngine.go()", () => {
         expect(proc._stdinWrites.at(-1)).toBe("go depth 5\n");
     });
 
-    it("builds 'go wtime btime winc binc movetime' for all options", async () => {
+    it("sends only 'go movetime X' when moveTime is provided — clock params suppressed", async () => {
         const spawnFn = makeSpawnFn();
         const engine = new UciEngine("/fake", { spawnFn, handshakeTimeoutMs: 200 });
         const proc = await quickStart(engine, spawnFn);
@@ -206,7 +216,44 @@ describe("UciEngine.go()", () => {
         await tick();
         proc._pushLine("bestmove d2d4");
         await p;
-        expect(proc._stdinWrites.at(-1)).toBe("go wtime 60000 btime 50000 winc 1000 binc 1000 movetime 500\n");
+        // movetime is mutually exclusive with clock params in UCI — only movetime should be sent
+        expect(proc._stdinWrites.at(-1)).toBe("go movetime 500\n");
+    });
+
+    it("sends wtime/btime/winc/binc when no moveTime is provided", async () => {
+        const spawnFn = makeSpawnFn();
+        const engine = new UciEngine("/fake", { spawnFn, handshakeTimeoutMs: 200 });
+        const proc = await quickStart(engine, spawnFn);
+
+        const p = engine.go({ whiteTime: 60000, blackTime: 50000, whiteInc: 1000, blackInc: 1000 });
+        await tick();
+        proc._pushLine("bestmove d2d4");
+        await p;
+        expect(proc._stdinWrites.at(-1)).toBe("go wtime 60000 btime 50000 winc 1000 binc 1000\n");
+    });
+
+    it("sends 'winc 0 binc 0' for zero-increment games (not omitted)", async () => {
+        const spawnFn = makeSpawnFn();
+        const engine = new UciEngine("/fake", { spawnFn, handshakeTimeoutMs: 200 });
+        const proc = await quickStart(engine, spawnFn);
+
+        const p = engine.go({ whiteTime: 60000, blackTime: 60000, whiteInc: 0, blackInc: 0 });
+        await tick();
+        proc._pushLine("bestmove e2e4");
+        await p;
+        expect(proc._stdinWrites.at(-1)).toBe("go wtime 60000 btime 60000 winc 0 binc 0\n");
+    });
+
+    it("combines depth with movetime correctly", async () => {
+        const spawnFn = makeSpawnFn();
+        const engine = new UciEngine("/fake", { spawnFn, handshakeTimeoutMs: 200 });
+        const proc = await quickStart(engine, spawnFn);
+
+        const p = engine.go({ depth: 10, moveTime: 3000 });
+        await tick();
+        proc._pushLine("bestmove g1f3");
+        await p;
+        expect(proc._stdinWrites.at(-1)).toBe("go depth 10 movetime 3000\n");
     });
 
     it("returns '(none)' when engine reports bestmove (none)", async () => {

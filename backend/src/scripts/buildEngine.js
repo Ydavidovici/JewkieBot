@@ -35,7 +35,24 @@ async function main() {
 
     console.log(`Building engine (${buildType}) with ${jobs} jobs...`);
 
-    await run(["cmake", "-S", ENGINE_ROOT, "-B", BUILD_DIR, `-DCMAKE_BUILD_TYPE=${buildType}`]);
+    const cmakeArgs = ["cmake", "-S", ENGINE_ROOT, "-B", BUILD_DIR, `-DCMAKE_BUILD_TYPE=${buildType}`];
+    
+    // Read version from package.json
+    try {
+        const pkgJson = await Bun.file(path.resolve(__dirname, "../../package.json")).json();
+        if (pkgJson.version) {
+            cmakeArgs.push(`-DENGINE_VERSION=${pkgJson.version}`);
+        }
+    } catch (err) {
+        console.warn("Could not read package.json version, defaulting to dev.", err);
+    }
+
+    // Explicitly select the MinGW generator on Windows so it doesn't default to MSVC/NMake
+    if (process.platform === "win32" && !process.env.CMAKE_GENERATOR) {
+        cmakeArgs.push("-G", "MinGW Makefiles");
+    }
+
+    await run(cmakeArgs);
     await run(["cmake", "--build", BUILD_DIR, "--target", "myengine", "-j", jobs]);
 
     if (!(await Bun.file(BUILT_BINARY).exists())) {

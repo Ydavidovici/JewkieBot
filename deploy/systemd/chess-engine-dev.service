@@ -1,10 +1,3 @@
-# Development unit for the Chess Engine backend (hot reload).
-# Install:
-#   sudo cp deploy/systemd/chess-engine-dev.service /etc/systemd/system/
-#   sudo cp deploy/systemd/dev.env.example /etc/chess-engine/dev.env   # then edit it
-#   sudo systemctl daemon-reload && sudo systemctl enable --now chess-engine-dev
-# Logs: journalctl -u chess-engine-dev -f
-
 [Unit]
 Description=Chess Engine backend (development, hot reload)
 After=network-online.target
@@ -13,31 +6,24 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# Dev usually runs from your own checkout under $HOME, as your login user.
-# Set these to your username and the path to your clone.
-User=youruser
-Group=youruser
-WorkingDirectory=/home/youruser/Chess-Engine/backend
+# Run as root so it has permission to read ~/srv/
+User=root
+Group=root
 
-EnvironmentFile=/etc/chess-engine/dev.env
+# Absolute path to your dev backend codebase
+WorkingDirectory=/root/srv/chess-engine/dev/backend
 
-# --hot reloads the server when source changes.
-# systemd does not search PATH/~/.bun, so symlink bun into a system path once:
-#   sudo ln -sf "$(which bun)" /usr/local/bin/bun
-ExecStart=/usr/local/bin/bun --hot src/server.js
+# Point systemd directly to your dev .env file
+EnvironmentFile=/root/srv/chess-engine/dev/backend/.env
+
+# Absolute path to Bun. We add --hot to automatically reload on changes.
+ExecStart=/root/.bun/bin/bun --hot src/server.js
 
 Restart=on-failure
 RestartSec=2
-
 TimeoutStopSec=30
 KillSignal=SIGTERM
-
 SyslogIdentifier=chess-engine-dev
-
-# Lighter sandboxing than prod: the checkout lives under /home and bun --hot
-# needs to read it, so ProtectHome/ProtectSystem are intentionally omitted.
-NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

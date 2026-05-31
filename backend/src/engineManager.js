@@ -33,12 +33,14 @@ export class UciEngine extends EventEmitter {
         this.isShuttingDown = false;
         this.notifier = options.notifier ?? nullNotifier;
         this.label = options.label ?? "engine";
+        this.bookPath = options.bookPath ?? null;
     }
 
     async ensureReady() {
         if (!this.ready) await this.start();
     }
 
+    // start spawns an engine
     async start() {
         if (this.process) return;
         this.isShuttingDown = false;
@@ -60,6 +62,12 @@ export class UciEngine extends EventEmitter {
             });
 
             await this._sendCommand("uci", (line) => line === "uciok", null, this.handshakeTimeoutMs);
+            
+            if (this.bookPath) {
+                await this._sendRaw(`setoption name OwnBook value true`);
+                await this._sendRaw(`setoption name BookFile value ${this.bookPath}`);
+            }
+
             await this._sendCommand("isready", (line) => line === "readyok", null, this.handshakeTimeoutMs);
 
             this.ready = true;
@@ -73,6 +81,54 @@ export class UciEngine extends EventEmitter {
         }
     }
 
+    // go tells the engine to start calculating
+    async go(options = {}) {
+        await this.ensureReady();
+
+        const parts = ["go"];
+        if (options.depth) parts.push(`depth ${options.depth}`);
+        if (options.whiteTime != null) parts.push(`wtime ${options.whiteTime}`);
+        if (options.blackTime != null) parts.push(`btime ${options.blackTime}`);
+        if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
+        if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
+        if (options.movesToGo != null) parts.push(`movestogo ${options.movesToGo}`);
+        if (options.moveTime) parts.push(`movetime ${options.moveTime}`);
+
+        // Watchdog must outlast the engine's worst-case think time. For a
+        // fixed movetime that's the budget; for a real clock the engine caps a
+        // single move at ~MAX_FRACTION of its remaining time, so allow the
+        // larger of the two clocks (we don't know our colour here) with margin.
+        const clockMax = Math.max(options.whiteTime || 0, options.blackTime || 0);
+        let safeTimeout;
+        if (options.moveTime) {
+            safeTimeout = options.moveTime + this.commandTimeoutBufferMs;
+        } else if (clockMax > 0) {
+            safeTimeout = Math.ceil(clockMax * 0.9) + this.commandTimeoutBufferMs;
+        } else {
+            safeTimeout = 60000;
+        }
+        let currentBestMove = "(none)";
+
+        try {
+            const response = await this._sendCommand(
+                parts.join(" "),
+                (line) => line.startsWith("bestmove"),
+                (line) => {
+                    if (line.startsWith("info") && line.includes(" pv ")) {
+                        const moves = line.split(" pv ")[1]?.split(" ");
+                        if (moves && moves[0]) currentBestMove = moves[0];
+                    }
+                },
+                safeTimeout,
+            );
+            return response.split(" ")[1];
+        } catch (e) {
+            console.error("[Engine] Error during 'go':", e);
+            return currentBestMove !== "(none)" ? currentBestMove : "0000";
+        }
+    }
+
+    // stop shuts down an engine
     async stop() {
         this.isShuttingDown = true;
         this.ready = false;
@@ -103,16 +159,16 @@ export class UciEngine extends EventEmitter {
 
         if (this.restarts < this.maxRestarts) {
             this.restarts++;
-            console.warn(`[Engine] Attempting restart ${this.restarts}/${this.maxRestarts} in ${this.restartDelayMs}ms...`);
-            this.notifier.warn(`Engine ${this.label} crashed`, {restart: `${this.restarts}/${this.maxRestarts}`});
+            console.warn(`[Engine ${this.label}] Crashed (${this.restarts}/${this.maxRestarts})`);
+            this.notifier.warn(`[EngineManager] Engine ${this.label} crashed`, {restart: `${this.restarts}/${this.maxRestarts}`});
             await new Promise(r => setTimeout(r, this.restartDelayMs));
             this.start().catch(e => {
-                console.error("Restart failed:", e);
-                this.notifier.error(`Engine ${this.label} restart failed`, {message: e?.message});
+                console.error(`[Engine ${this.label}] Restart failed:`, e);
+                this.notifier.error(`[EngineManager] Engine ${this.label} restart failed`, {message: e?.message});
             });
         } else {
-            console.error("[Engine] Max restarts exceeded.");
-            this.notifier.error(`Engine ${this.label} exceeded max restarts`, {max: this.maxRestarts});
+            console.error(`[Engine ${this.label}] Max restarts exceeded`);
+            this.notifier.error(`[EngineManager] Engine ${this.label} exceeded max restarts`, {max: this.maxRestarts});
             this.emit("fatal_error", new Error("Max restarts exceeded"));
         }
     }
@@ -195,7 +251,13 @@ export class UciEngine extends EventEmitter {
     async uciNewGame() {
         await this.ensureReady();
         await this._sendRaw("ucinewgame");
-        await this._sendCommand("isready", (l) => l === "readyok");
+        await this._sendCommand("isready", (line) => line === "readyok");
+    }
+
+    async setOption(name, value) {
+        await this.ensureReady();
+        const valueStr = value !== undefined && value !== null && value !== "" ? ` value ${value}` : "";
+        await this._sendRaw(`setoption name ${name}${valueStr}`);
     }
 
     async position(fen, moves = []) {
@@ -205,49 +267,54 @@ export class UciEngine extends EventEmitter {
         await this._sendRaw(cmd);
     }
 
-    async go(options = {}) {
+    async goWithEval(options = {}) {
         await this.ensureReady();
 
         const parts = ["go"];
-        if (options.depth) parts.push(`depth ${options.depth}`);
-        if (options.whiteTime != null) parts.push(`wtime ${options.whiteTime}`);
-        if (options.blackTime != null) parts.push(`btime ${options.blackTime}`);
-        if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
-        if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
-        if (options.movesToGo != null) parts.push(`movestogo ${options.movesToGo}`);
+        if (options.depth)    parts.push(`depth ${options.depth}`);
         if (options.moveTime) parts.push(`movetime ${options.moveTime}`);
 
-        // Watchdog must outlast the engine's worst-case think time. For a
-        // fixed movetime that's the budget; for a real clock the engine caps a
-        // single move at ~MAX_FRACTION of its remaining time, so allow the
-        // larger of the two clocks (we don't know our colour here) with margin.
-        const clockMax = Math.max(options.whiteTime || 0, options.blackTime || 0);
-        let safeTimeout;
-        if (options.moveTime) {
-            safeTimeout = options.moveTime + this.commandTimeoutBufferMs;
-        } else if (clockMax > 0) {
-            safeTimeout = Math.ceil(clockMax * 0.9) + this.commandTimeoutBufferMs;
-        } else {
-            safeTimeout = 60000;
-        }
-        let currentBestMove = "(none)";
+        // For depth-based analysis allow up to 5 minutes; movetime gets the normal buffer.
+        const safeTimeout = options.moveTime
+            ? options.moveTime + this.commandTimeoutBufferMs
+            : 300_000;
+
+        let scoreCp = null;
+        let isMate  = false;
+        let bestMove = null;
 
         try {
             const response = await this._sendCommand(
                 parts.join(" "),
                 (line) => line.startsWith("bestmove"),
                 (line) => {
-                    if (line.startsWith("info") && line.includes(" pv ")) {
-                        const moves = line.split(" pv ")[1]?.split(" ");
-                        if (moves && moves[0]) currentBestMove = moves[0];
+                    if (!line.startsWith("info")) return;
+                    if (line.includes("multipv") && !line.includes("multipv 1")) return;
+                    // Skip aspiration-window bounds — only use exact scores.
+                    if (line.includes("lowerbound") || line.includes("upperbound")) return;
+
+                    const cpMatch   = line.match(/\bscore cp (-?\d+)/);
+                    const mateMatch = line.match(/\bscore mate (-?\d+)/);
+                    const pvMatch   = line.match(/\bpv (\S+)/);
+
+                    if (cpMatch) {
+                        scoreCp = parseInt(cpMatch[1], 10);
+                        isMate  = false;
+                    } else if (mateMatch) {
+                        const n = parseInt(mateMatch[1], 10);
+                        // Encode mate distances as large cp values so CPL math still works.
+                        scoreCp = n > 0 ? 30_000 - n : -(30_000 + n);
+                        isMate  = true;
                     }
+                    if (pvMatch) bestMove = pvMatch[1];
                 },
                 safeTimeout,
             );
-            return response.split(" ")[1];
+            const move = response.split(" ")[1];
+            return {bestMove: move || bestMove, scoreCp, isMate};
         } catch (e) {
-            console.error("[Engine] Error during 'go':", e);
-            return currentBestMove !== "(none)" ? currentBestMove : "0000";
+            console.error("[Engine] Error during 'goWithEval':", e);
+            return {bestMove: bestMove ?? "0000", scoreCp, isMate};
         }
     }
 
@@ -303,8 +370,8 @@ export class EngineManager {
     // want the slot held).
     reserveEngine(label, enginePath) {
         if (!this.hasCapacity()) {
-            const err = new EngineCapReached(this.maxEngines, this.engines.size);
-            this.notifier.warn("Engine cap reached — rejecting spawn", {
+            this.notifier.warn("[EngineManager] Engine cap reached — rejecting spawn", {
+                active: this.count(),
                 cap: this.maxEngines,
                 current: this.engines.size,
                 requested: label,
@@ -330,20 +397,20 @@ export class EngineManager {
 
         engine.on("fatal_error", (err) => {
             console.error(`[Manager] Engine ${id} died permanently:`, err);
-            this.notifier.error(`Engine ${id} died permanently`, {message: err?.message});
+            this.notifier.error(`[EngineManager] Engine ${id} died permanently`, {message: err?.message});
             this.engines.delete(id);
         });
 
         try {
             await engine.start();
         } catch (err) {
-            this.notifier.error(`Engine ${id} failed to start`, {message: err?.message});
+            this.notifier.error(`[EngineManager] Engine ${id} failed to start`, {message: err?.message});
             throw err;
         }
 
         this.engines.set(id, engine);
-        console.log(`[Manager] Successfully registered engine: ${id}`);
-        this.notifier.info(`Engine registered: ${id}`, {active: this.engines.size});
+        console.log(`[Manager] Engine registered: ${id}`);
+        this.notifier.info(`[EngineManager] Engine registered: ${id}`, {active: this.engines.size});
         return engine;
     }
 
@@ -358,7 +425,7 @@ export class EngineManager {
             this.engines.delete(id);
             await engine.stop().catch(e => {
                 console.error(`[Manager] Error stopping engine ${id}:`, e);
-                this.notifier.warn(`Error stopping engine ${id}`, {message: e?.message});
+                this.notifier.warn(`[EngineManager] Error stopping engine ${id}`, {message: e?.message});
             });
         }
     }
@@ -369,7 +436,7 @@ export class EngineManager {
         const stopPromises = Array.from(this.engines.values()).map(engine =>
             engine.stop().catch(e => {
                 console.error("[Manager] Error during mass shutdown:", e);
-                this.notifier.warn("Error during mass shutdown", {message: e?.message});
+                this.notifier.warn("[EngineManager] Error during mass shutdown", {message: e?.message});
             })
         );
 
@@ -377,84 +444,5 @@ export class EngineManager {
 
         await Promise.allSettled(stopPromises);
         console.log("[Manager] All engines shut down successfully.");
-    }
-}
-
-export class CutechessManager extends EventEmitter {
-    constructor(cutechessPath) {
-        super();
-        this.cmd = cutechessPath;
-        this.process = null;
-    }
-
-    async runGauntlet({myEngine, opponents, timeControl = "10+0.1", rounds = 50, concurrency = 4, pgnOut = "gauntlet.pgn", openingBook = null}) {
-        if (this.process) throw new Error("A tournament is already running!");
-
-        console.log(`[Cutechess] Starting Gauntlet: ${myEngine.name} vs ${opponents.length} opponents.`);
-
-        const args = ["-engine", `name=${myEngine.name}`, `cmd=${myEngine.path}`];
-        for (const opp of opponents) {
-            args.push("-engine", `name=${opp.name}`, `cmd=${opp.path}`);
-            if (opp.args) args.push(...opp.args);
-        }
-
-        args.push(
-            "-each", `tc=${timeControl}`,
-            "-rounds", rounds.toString(),
-            "-games", "2",
-            "-repeat",
-            "-concurrency", concurrency.toString(),
-            "-ratinginterval", "10",
-            "-pgnout", pgnOut,
-        );
-
-        if (openingBook) {
-            args.push("-openings", `file=${openingBook.file}`, `format=${openingBook.format}`, "order=random", "plies=16");
-        }
-
-        return new Promise((resolve, reject) => {
-            try {
-                this.process = spawn({
-                    cmd: [this.cmd, ...args],
-                    stdout: "pipe",
-                    stderr: "pipe",
-                });
-
-                const decoder = new TextDecoder();
-
-                (async () => {
-                    for await (const chunk of this.process.stdout) {
-                        const text = decoder.decode(chunk);
-                        process.stdout.write(text);
-                        if (text.includes("Elo difference:")) this.emit("elo_update", text);
-                    }
-                })();
-
-                (async () => {
-                    for await (const chunk of this.process.stderr) {
-                        console.error(`[Cutechess Error] ${decoder.decode(chunk)}`);
-                    }
-                })();
-
-                this.process.exited.then((code) => {
-                    console.log(`[Cutechess] Tournament finished with exit code ${code}.`);
-                    this.process = null;
-                    if (code === 0) resolve(pgnOut);
-                    else reject(new Error(`Cutechess exited with code ${code}`));
-                });
-
-            } catch (err) {
-                console.error("[Cutechess] Failed to spawn:", err);
-                reject(err);
-            }
-        });
-    }
-
-    stop() {
-        if (this.process) {
-            console.log("[Cutechess] Aborting tournament...");
-            this.process.kill();
-            this.process = null;
-        }
     }
 }

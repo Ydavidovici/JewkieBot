@@ -143,7 +143,7 @@ export class HealthPinger {
     }
 }
 
-export async function createDiscordBot({token, channelId, notifier, healthUrl, intents}) {
+export async function createDiscordBot({token, channelId, notifier, healthUrl, apiUrl, intents}) {
     if (!token) throw new Error("createDiscordBot requires token");
     if (!channelId) throw new Error("createDiscordBot requires channelId");
 
@@ -178,6 +178,16 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, i
     const commands = [
         new SlashCommandBuilder().setName("status").setDescription("Show bot status"),
         new SlashCommandBuilder().setName("health").setDescription("Ping the health endpoint now"),
+        new SlashCommandBuilder()
+            .setName("analysis")
+            .setDescription("Run engine analysis on a FEN")
+            .addStringOption(opt => opt.setName("fen").setDescription("The FEN string").setRequired(true))
+            .addIntegerOption(opt => opt.setName("depth").setDescription("Search depth").setRequired(false)),
+        new SlashCommandBuilder()
+            .setName("bench")
+            .setDescription("Run a quick engine benchmark")
+            .addStringOption(opt => opt.setName("mode").setDescription("depth or time").setRequired(false))
+            .addIntegerOption(opt => opt.setName("depth").setDescription("Search depth").setRequired(false)),
     ].map(c => c.toJSON());
 
     client.once(Events.ClientReady, async (c) => {
@@ -208,6 +218,48 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, i
                     await interaction.editReply(`HTTP ${res.status}\n\`\`\`${body.slice(0, 1800)}\`\`\``);
                 } catch (err) {
                     await interaction.editReply(`Health check failed: ${err.message}`);
+                }
+            } else if (interaction.commandName === "analysis") {
+                if (!apiUrl) return interaction.reply("API URL not configured.");
+                await interaction.deferReply();
+                try {
+                    const fen = interaction.options.getString("fen");
+                    const depth = interaction.options.getInteger("depth") || 10;
+                    
+                    const res = await fetch(`${apiUrl}/engine/analysis`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({fen, depth}),
+                    });
+                    const data = await res.json();
+                    
+                    if (!res.ok) {
+                        return interaction.editReply(`Analysis failed: ${data.error}`);
+                    }
+                    await interaction.editReply(`**Analysis Complete (Depth ${data.depth})**\n\`\`\`json\n${safeJson(data.bestMove)}\n\`\`\``);
+                } catch (err) {
+                    await interaction.editReply(`Analysis failed: ${err.message}`);
+                }
+            } else if (interaction.commandName === "bench") {
+                if (!apiUrl) return interaction.reply("API URL not configured.");
+                await interaction.deferReply();
+                try {
+                    const mode = interaction.options.getString("mode") || "depth";
+                    const depth = interaction.options.getInteger("depth") || 9;
+                    
+                    const res = await fetch(`${apiUrl}/engine/bench`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({mode, depth}),
+                    });
+                    const data = await res.json();
+                    
+                    if (!res.ok) {
+                        return interaction.editReply(`Benchmark failed: ${data.error || "Unknown"}`);
+                    }
+                    await interaction.editReply(`**Benchmark Complete**\n\`\`\`json\n${safeJson(data.data)}\n\`\`\``);
+                } catch (err) {
+                    await interaction.editReply(`Benchmark failed: ${err.message}`);
                 }
             }
         } catch (err) {

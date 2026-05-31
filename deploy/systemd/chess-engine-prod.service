@@ -1,15 +1,3 @@
-# Production unit for the Chess Engine backend.
-#
-# Host prereqs (the unit assumes these already exist):
-#   - WorkingDirectory has dependencies installed: cd backend && bun install
-#   - The engine binary exists at the ENGINE_PATH set in prod.env
-#
-# Install:
-#   sudo cp deploy/systemd/chess-engine.service /etc/systemd/system/
-#   sudo cp deploy/systemd/prod.env.example /etc/chess-engine/prod.env   # then edit it
-#   sudo systemctl daemon-reload && sudo systemctl enable --now chess-engine
-# Logs: journalctl -u chess-engine -f
-
 [Unit]
 Description=Chess Engine backend (production)
 After=network-online.target
@@ -18,37 +6,25 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# Dedicated unprivileged account. Create it once:
-#   sudo useradd --system --home /opt/chess-engine --shell /usr/sbin/nologin chess
-User=chess
-Group=chess
+# Run as root so it has permission to read ~/srv/
+User=root
+Group=root
 
-# Absolute path to the deployed checkout. Adjust to where you deploy.
-WorkingDirectory=/opt/chess-engine/backend
+# Absolute path to your backend codebase
+WorkingDirectory=/root/srv/chess-engine/prod/backend
 
-# Config + secrets live here, not in the unit. ENGINE_PATH must point at the binary.
-EnvironmentFile=/etc/chess-engine/prod.env
+# Point systemd directly to your .env file
+EnvironmentFile=/root/srv/chess-engine/prod/backend/.env
 
-# Absolute path to bun. systemd does not search PATH/~/.bun, and ProtectHome=true
-# below hides a home-dir install, so symlink bun into a system path once:
-#   sudo ln -sf "$(which bun)" /usr/local/bin/bun
-ExecStart=/usr/local/bin/bun run src/server.js
+# Absolute path to Bun (no symlinks needed)
+ExecStart=/root/.bun/bin/bun run src/server.js
 
-# server.js exits 0 on SIGTERM and 1 on fatal errors, so restart only on failure.
+# Graceful shutdown and restart logic
 Restart=on-failure
 RestartSec=2
-
-# Let the graceful shutdown (notifier flush + engine "quit") finish before SIGKILL.
 TimeoutStopSec=30
 KillSignal=SIGTERM
-
 SyslogIdentifier=chess-engine
-
-# Sandboxing — safe defaults. /opt stays writable so backend/storage works.
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

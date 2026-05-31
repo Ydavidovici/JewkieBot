@@ -1,223 +1,248 @@
 import React, { useState, useEffect } from "react";
+import { useBot } from "../context/BotContext.jsx";
 import {
-    startLichessBot,
-    stopLichessBot,
-    getLichessStatus,
-    createChallenge,
-    createOpenChallenge,
-    createAiChallenge,
-    challengeWeakestBot
+    startLichessBot, stopLichessBot, createChallenge,
+    createOpenChallenge, createAiChallenge, challengeWeakestBot,
+    startAutoplay, stopAutoplay, getOpenings
 } from "../services/api.js";
+import { Play, Square, Swords, Bot, Globe, Target, Flame } from "lucide-react";
 
 export default function LichessPage() {
+    const { activeUrl, activeStatus, refreshActive } = useBot();
+    const isRunning = activeStatus?.lichess?.running;
+    const botProfile = activeStatus?.lichess?.profile;
+    const activeGames = activeStatus?.lichess?.activeGames || [];
+
     const [token, setToken] = useState("");
-    const [isRunning, setIsRunning] = useState(false);
-    const [botProfile, setBotProfile] = useState(null);
-    const [activeGames, setActiveGames] = useState([]);
     const [statusMessage, setStatusMessage] = useState("");
     const [error, setError] = useState(null);
 
     const [opponent, setOpponent] = useState("maia1");
     const [stockfishLevel, setStockfishLevel] = useState(1);
+    
+    const [openings, setOpenings] = useState({});
 
     useEffect(() => {
-        const fetchStatus = async () => {
-            try {
-                const data = await getLichessStatus();
-                setIsRunning(data.running);
-                setBotProfile(data.profile);
-                setActiveGames(data.activeGames || []);
-            } catch (err) {
-                console.error("Failed to poll status", err);
-            }
-        };
-        fetchStatus();
-        const interval = setInterval(fetchStatus, 2000);
-        return () => clearInterval(interval);
-    }, []);
+        getOpenings(activeUrl)
+            .then(res => setOpenings(res))
+            .catch(console.error);
+    }, [activeUrl]);
 
-    const handleStart = async () => {
+    // Comprehensive Autoplay Configuration State
+    const [autoplayConfig, setAutoplayConfig] = useState({
+        target: 1,           // Concurrent games to maintain
+        limit: 180,          // Base time in seconds
+        increment: 2,        // Increment in seconds
+        rated: true,         // Rated or Casual
+        mode: "near",        // Matchmaking mode
+        window: 200,         // Rating window
+        whiteOpeningId: "balanced",
+        blackOpeningId: "balanced"
+    });
+
+    useEffect(() => {
+        if (activeStatus?.lichess?.autoplay?.enabled) {
+            setAutoplayConfig(prev => ({
+                ...prev,
+                target: activeStatus.lichess.autoplay.target,
+                limit: activeStatus.lichess.autoplay.limit,
+                increment: activeStatus.lichess.autoplay.increment,
+                rated: activeStatus.lichess.autoplay.rated,
+                mode: activeStatus.lichess.autoplay.mode,
+                window: activeStatus.lichess.autoplay.window,
+                whiteOpeningId: activeStatus.lichess.autoplay.whiteOpeningId || "balanced",
+                blackOpeningId: activeStatus.lichess.autoplay.blackOpeningId || "balanced"
+            }));
+        }
+    }, [activeStatus?.lichess?.autoplay]);
+
+    const executeAction = async (msg, actionFn) => {
         setError(null);
-        setStatusMessage("Starting...");
+        setStatusMessage(msg);
         try {
-            const res = await startLichessBot(token || undefined);
-            setStatusMessage(res.message);
-            setIsRunning(true);
+            const res = await actionFn();
+            setStatusMessage(res?.message || "Action completed!");
+            refreshActive();
         } catch (err) {
             setError(err.response?.data?.error || err.message);
             setStatusMessage("");
         }
     };
 
-    const handleStop = async () => {
-        setError(null);
-        setStatusMessage("Stopping...");
-        try {
-            const res = await stopLichessBot();
-            setStatusMessage(res.message);
-            setIsRunning(false);
-            setBotProfile(null);
-            setActiveGames([]);
-        } catch (err) {
-            setError(err.message);
-        }
-    };
+    const handleStart = () => executeAction("Starting...", () => startLichessBot(token || undefined, activeUrl));
+    const handleStop = () => executeAction("Stopping...", () => stopLichessBot(activeUrl));
+    const handleBotChallenge = () => executeAction(`Challenging ${opponent}...`, () => createChallenge(opponent, 180, 0, activeUrl));
+    const handleOpenChallenge = () => executeAction("Creating Open Challenge...", () => createOpenChallenge(180, 0, activeUrl));
+    const handleAiChallenge = () => executeAction(`Starting game vs Stockfish L${stockfishLevel}...`, () => createAiChallenge(stockfishLevel, 180, 0, activeUrl));
+    const handleWeakestChallenge = () => executeAction("Scanning for weakest bot...", () => challengeWeakestBot(180, 0, activeUrl));
 
-    const handleBotChallenge = async () => {
-        setError(null);
-        setStatusMessage(`Challenging ${opponent}...`);
-        try {
-            await createChallenge(opponent, 180, 0);
-            setStatusMessage(`Challenge sent to ${opponent}!`);
-        } catch (err) {
-            setError(err.response?.data?.error || "Challenge failed");
-        }
-    };
-
-    const handleOpenChallenge = async () => {
-        setError(null);
-        setStatusMessage("Creating Open Challenge...");
-        try {
-            await createOpenChallenge(180, 0);
-            setStatusMessage("Open Challenge Created! Waiting for opponent...");
-        } catch (err) {
-            setError(err.response?.data?.error || "Open Challenge failed");
-        }
-    };
-
-    const handleAiChallenge = async () => {
-        setError(null);
-        setStatusMessage(`Starting game vs Stockfish Level ${stockfishLevel}...`);
-        try {
-            await createAiChallenge(stockfishLevel, 180, 0);
-            setStatusMessage("Game started against AI!");
-        } catch (err) {
-            setError(err.response?.data?.error || "AI Challenge failed");
-        }
-    };
-
-    const handleWeakestChallenge = async () => {
-        setError(null);
-        setStatusMessage("Scanning for weakest bot online...");
-        try {
-            const res = await challengeWeakestBot(180, 0);
-            setStatusMessage(res.message);
-        } catch (err) {
-            setError(err.response?.data?.error || "Scan failed");
+    const handleAutoplayToggle = () => {
+        if (activeStatus?.lichess?.autoplay?.enabled) {
+            executeAction("Stopping Autoplay...", () => stopAutoplay(activeUrl));
+        } else {
+            executeAction(`Starting Autoplay (Target: ${autoplayConfig.target} games)...`, () => startAutoplay(autoplayConfig, activeUrl));
         }
     };
 
     return (
-        <div className="lichess-container" style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto" }}>
-            <h1 style={{ fontSize: "2rem", marginBottom: "1rem" }}>♞ Lichess Bot Dashboard</h1>
+        <div className="space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto">
+            <header>
+                <h1 className="text-3xl font-black text-white mb-2 tracking-tight">Lichess Bot Control</h1>
+                <p className="text-slate-400">Manage the active Lichess bot identity and dispatch challenges.</p>
+            </header>
 
-            <div style={{
-                background: "#2a2a2a", padding: "1.5rem", borderRadius: "8px", marginBottom: "2rem",
-                border: isRunning ? "2px solid #4ade80" : "2px solid #ef4444"
-            }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            {/* Master Control */}
+            <div className={`bg-slate-900 border-2 rounded-2xl p-6 shadow-xl transition-colors duration-300 ${isRunning ? 'border-green-500/50' : 'border-red-500/50'}`}>
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
-                        <h2 style={{ margin: 0 }}>
-                            Status: <span style={{ color: isRunning ? "#4ade80" : "#ef4444" }}>
-                                {isRunning ? "ONLINE" : "OFFLINE"}
-                            </span>
+                        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                            Status: <span className={isRunning ? "text-green-400" : "text-red-400"}>{isRunning ? "ONLINE" : "OFFLINE"}</span>
                         </h2>
-                        {botProfile && <p style={{ color: "#ccc", margin: "0.5rem 0 0 0" }}>Logged in as: <strong>{botProfile}</strong></p>}
+                        {botProfile && <p className="text-slate-400 mt-1">Logged in as: <strong className="text-white font-mono">{botProfile}</strong></p>}
                     </div>
                     {isRunning ? (
-                        <button onClick={handleStop} style={{ background: "#ef4444", color: "white", padding: "10px 20px", border: "none", borderRadius: "4px", cursor: "pointer" }}>Stop Bot</button>
+                        <button onClick={handleStop} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all">
+                            <Square size={18} fill="currentColor" /> Stop Bot
+                        </button>
                     ) : (
-                        <div style={{ display: "flex", gap: "10px" }}>
-                            <input type="password" placeholder="Token (Optional)" value={token} onChange={(e) => setToken(e.target.value)} style={{ padding: "10px", borderRadius: "4px", background: "#333", border: "1px solid #555", color: "white" }} />
-                            <button onClick={handleStart} style={{ background: "#4ade80", color: "#000", padding: "10px 20px", border: "none", borderRadius: "4px", fontWeight: "bold", cursor: "pointer" }}>Start Bot</button>
+                        <div className="flex w-full md:w-auto gap-3">
+                            <input 
+                                type="password" 
+                                placeholder="Lichess Token (Optional)" 
+                                value={token} 
+                                onChange={(e) => setToken(e.target.value)} 
+                                className="bg-slate-800 border border-slate-700 text-white px-4 py-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none flex-1 md:w-64"
+                            />
+                            <button onClick={handleStart} className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all shadow-lg">
+                                <Play size={18} fill="currentColor" /> Start Bot
+                            </button>
                         </div>
                     )}
                 </div>
-                {statusMessage && <p style={{ marginTop: "1rem", color: "#888" }}>{statusMessage}</p>}
-                {error && <p style={{ marginTop: "1rem", color: "#ef4444" }}>Error: {error}</p>}
+                {statusMessage && <p className="mt-4 text-sm text-blue-400 font-medium">{statusMessage}</p>}
+                {error && <p className="mt-4 text-sm text-red-400 font-medium flex items-center gap-2"><Target size={16} /> {error}</p>}
             </div>
 
-            {isRunning && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "2rem" }}>
-
-                    <div style={{ background: "#333", padding: "1rem", borderRadius: "8px" }}>
-                        <h3 style={{ marginTop: 0 }}>⚔️ Vs Specific Bot</h3>
-                        <div style={{ display: "flex", gap: "0.5rem" }}>
-                            <input
-                                type="text"
-                                value={opponent}
-                                onChange={(e) => setOpponent(e.target.value)}
-                                placeholder="username"
-                                style={{ flex: 1, padding: "8px", borderRadius: "4px", border: "none", background: "#222", color: "white" }}
-                            />
-                            <button onClick={handleBotChallenge} style={{ background: "#3b82f6", color: "white", border: "none", padding: "8px 12px", borderRadius: "4px", cursor: "pointer" }}>Play</button>
-                        </div>
+            {/* Actions Grid */}
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity duration-300 ${!isRunning ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-700 transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Swords size={20} className="text-blue-400"/> Vs Specific Bot</h3>
+                    <div className="flex gap-3">
+                        <input type="text" value={opponent} onChange={(e) => setOpponent(e.target.value)} placeholder="username" className="bg-slate-800 border border-slate-700 text-white px-4 py-2 rounded-lg flex-1 outline-none focus:ring-1 focus:ring-blue-500" />
+                        <button onClick={handleBotChallenge} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold shadow-md">Play</button>
                     </div>
+                </div>
 
-                    <div style={{ background: "#333", padding: "1rem", borderRadius: "8px" }}>
-                        <h3 style={{ marginTop: 0 }}>🤖 Vs Stockfish AI</h3>
-                        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                            <span style={{ color: "#aaa" }}>Level:</span>
-                            <select
-                                value={stockfishLevel}
-                                onChange={(e) => setStockfishLevel(e.target.value)}
-                                style={{ padding: "8px", borderRadius: "4px", background: "#222", color: "white", border: "none" }}
-                            >
-                                {[1,2,3,4,5,6,7,8].map(l => <option key={l} value={l}>{l}</option>)}
+                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-700 transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Bot size={20} className="text-purple-400"/> Vs Stockfish AI</h3>
+                    <div className="flex gap-3 items-center">
+                        <select value={stockfishLevel} onChange={(e) => setStockfishLevel(e.target.value)} className="bg-slate-800 border border-slate-700 text-white px-4 py-2.5 rounded-lg flex-1 outline-none focus:ring-1 focus:ring-purple-500">
+                            {[1,2,3,4,5,6,7,8].map(l => <option key={l} value={l}>Level {l}</option>)}
+                        </select>
+                        <button onClick={handleAiChallenge} className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2.5 rounded-lg font-bold shadow-md">Play AI</button>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-700 transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Globe size={20} className="text-green-400"/> Open Challenge</h3>
+                    <p className="text-sm text-slate-400 mb-4">Create a public 3+0 rated game anyone can join.</p>
+                    <button onClick={handleOpenChallenge} className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-bold shadow-md">Create Open Challenge</button>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-700 transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Flame size={20} className="text-red-400"/> Hunt Weakest Bot</h3>
+                    <p className="text-sm text-slate-400 mb-4">Scans online bots for the lowest rating and challenges them.</p>
+                    <button onClick={handleWeakestChallenge} className="w-full bg-red-600 hover:bg-red-500 text-white py-3 rounded-xl font-bold shadow-md">Find & Destroy</button>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg md:col-span-2 hover:border-slate-700 transition-colors">
+                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Target size={20} className="text-yellow-400"/> Autoplay Manager</h3>
+                    <p className="text-sm text-slate-400 mb-6">Automatically seek and play games to continuously maintain your target concurrent games.</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 bg-slate-800/50 p-6 rounded-xl border border-slate-700 mb-6">
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Concurrent Games Target</label>
+                            <input type="number" min="1" max="20" value={autoplayConfig.target} onChange={(e) => setAutoplayConfig({...autoplayConfig, target: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled} />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Base Time (Secs)</label>
+                            <input type="number" step="15" value={autoplayConfig.limit} onChange={(e) => setAutoplayConfig({...autoplayConfig, limit: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled} />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Increment (Secs)</label>
+                            <input type="number" min="0" value={autoplayConfig.increment} onChange={(e) => setAutoplayConfig({...autoplayConfig, increment: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled} />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponent Mode</label>
+                            <select value={autoplayConfig.mode} onChange={(e) => setAutoplayConfig({...autoplayConfig, mode: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled}>
+                                <option value="near">Near My Rating</option>
+                                <option value="weakest">Hunt Weakest Bot</option>
+                                <option value="random">Random Open</option>
                             </select>
-                            <button onClick={handleAiChallenge} style={{ flex: 1, background: "#8b5cf6", color: "white", border: "none", padding: "8px", borderRadius: "4px", cursor: "pointer" }}>Play AI</button>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Rating Window (±)</label>
+                            <input type="number" step="50" value={autoplayConfig.window} onChange={(e) => setAutoplayConfig({...autoplayConfig, window: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500 disabled:opacity-50" disabled={activeStatus?.lichess?.autoplay?.enabled || autoplayConfig.mode !== 'near'} />
+                        </div>
+                        <div className="space-y-2 flex flex-col justify-center">
+                            <label className="flex items-center gap-3 cursor-pointer py-2 mt-4">
+                                <input type="checkbox" checked={autoplayConfig.rated} onChange={(e) => setAutoplayConfig({...autoplayConfig, rated: e.target.checked})} className="w-5 h-5 accent-yellow-500 rounded" disabled={activeStatus?.lichess?.autoplay?.enabled} />
+                                <span className="text-sm font-bold text-white">Play Rated Games</span>
+                            </label>
+                        </div>
+                        <div className="space-y-2 lg:col-span-1">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">White Opening Style</label>
+                            <select value={autoplayConfig.whiteOpeningId || "balanced"} onChange={(e) => setAutoplayConfig({...autoplayConfig, whiteOpeningId: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled}>
+                                <option value="balanced">Balanced (Global Book)</option>
+                                <option value="random_tactical">Random Tactical</option>
+                                <option value="random_positional">Random Positional</option>
+                                {Object.entries(openings).map(([id, config]) => (
+                                    <option key={id} value={id}>{config.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="space-y-2 lg:col-span-1">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Black Opening Style</label>
+                            <select value={autoplayConfig.blackOpeningId || "balanced"} onChange={(e) => setAutoplayConfig({...autoplayConfig, blackOpeningId: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled}>
+                                <option value="balanced">Balanced (Global Book)</option>
+                                <option value="random_tactical">Random Tactical</option>
+                                <option value="random_positional">Random Positional</option>
+                                {Object.entries(openings).map(([id, config]) => (
+                                    <option key={id} value={id}>{config.name}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
 
-                    <div style={{ background: "#333", padding: "1rem", borderRadius: "8px", gridColumn: "span 2" }}>
-                        <h3 style={{ marginTop: 0 }}>🌍 Open Challenge</h3>
-                        <p style={{ color: "#888", fontSize: "0.9rem", margin: "0 0 1rem 0" }}>Create a public 3+0 rated game anyone can join.</p>
-                        <button onClick={handleOpenChallenge} style={{ width: "100%", background: "#10b981", color: "white", border: "none", padding: "10px", borderRadius: "4px", cursor: "pointer", fontWeight: "bold" }}>
-                            Create Open Challenge
-                        </button>
-                    </div>
-
-                    <div style={{ background: "#333", padding: "1rem", borderRadius: "8px" }}>
-                        <h3 style={{ marginTop: 0 }}>🩸 Hunt Weakest Bot</h3>
-                        <p style={{ color: "#aaa", fontSize: "0.9rem", margin: "0 0 1rem 0" }}>
-                            Scans online bots for the lowest rating and challenges them.
-                        </p>
-                        <button
-                            onClick={handleWeakestChallenge}
-                            style={{
-                                width: "100%",
-                                background: "#dc2626",
-                                color: "white",
-                                border: "none",
-                                padding: "10px",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontWeight: "bold"
-                            }}
-                        >
-                            Find & Destroy
-                        </button>
-                    </div>
+                    <button 
+                        onClick={handleAutoplayToggle}
+                        className={`w-full py-4 rounded-xl font-black text-lg transition-all shadow-lg text-white ${
+                            activeStatus?.lichess?.autoplay?.enabled 
+                                ? 'bg-red-600 hover:bg-red-500 border-b-4 border-red-700 active:border-b-0 active:translate-y-1' 
+                                : 'bg-yellow-600 hover:bg-yellow-500 border-b-4 border-yellow-700 active:border-b-0 active:translate-y-1'
+                        }`}
+                    >
+                        {activeStatus?.lichess?.autoplay?.enabled ? "STOP AUTOPLAY" : "START AUTOPLAY LOOP"}
+                    </button>
                 </div>
-            )}
+            </div>
 
-            {isRunning && (
-                <div>
-                    <h2 style={{ borderBottom: "1px solid #444", paddingBottom: "0.5rem" }}>Active Games</h2>
-                    {activeGames.length === 0 ? (
-                        <div style={{ textAlign: "center", padding: "2rem", color: "#888", background: "#222", borderRadius: "8px" }}>Waiting for games...</div>
-                    ) : (
-                        <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
-                            {activeGames.map((gameId) => (
-                                <div key={gameId} style={{ background: "#333", padding: "1rem", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <div><strong>Game ID:</strong> {gameId}</div>
-                                    <a href={`https://lichess.org/${gameId}`} target="_blank" rel="noopener noreferrer" style={{ background: "#3b82f6", color: "white", textDecoration: "none", padding: "8px 16px", borderRadius: "4px" }}>Watch ↗</a>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
+            {/* Active Games Viewer */}
+            <div className={`transition-opacity duration-300 ${!isRunning ? 'opacity-50' : ''}`}>
+                <h2 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">Active Games ({activeGames.length})</h2>
+                {activeGames.length === 0 ? (
+                    <div className="text-center p-12 bg-slate-900 border border-slate-800 rounded-2xl text-slate-500 font-medium">Waiting for games...</div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {activeGames.map((gameId) => (
+                            <div key={gameId} className="bg-slate-900 border border-slate-800 p-5 rounded-xl flex justify-between items-center shadow-md">
+                                <div className="font-mono text-slate-300 font-medium">ID: {gameId}</div>
+                                <a href={`https://lichess.org/${gameId}`} target="_blank" rel="noopener noreferrer" className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg text-sm font-bold shadow transition-colors">Watch Live ↗</a>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

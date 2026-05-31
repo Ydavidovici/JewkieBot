@@ -1,16 +1,17 @@
 import axios from "axios";
 
-const BASE_URL = import.meta.env.API_URL ?? "http://localhost:8000";
+const DEFAULT_BASE_URL = import.meta.env.API_URL ?? "http://45.55.161.47:8000";
 
 /**
  * Generic API Request Handler
  * @param {string} endpoint - The URI path (e.g., '/api/health')
- * @param {object} config - Configuration object {method, data, headers, ...}
+ * @param {object} config - Configuration object {method, data, headers, baseUrl, ...}
  */
-export const request = async (endpoint, {method = "GET", data, headers = {}, ...customConfig} = {}) => {
+export const request = async (endpoint, {method = "GET", data, headers = {}, baseUrl = null, ...customConfig} = {}) => {
     try {
+        const targetUrl = baseUrl || DEFAULT_BASE_URL;
         const response = await axios({
-            url: `${BASE_URL}${endpoint}`,
+            url: `${targetUrl}${endpoint}`,
             method,
             data,
             headers: {
@@ -22,108 +23,158 @@ export const request = async (endpoint, {method = "GET", data, headers = {}, ...
 
         return response.data;
     } catch (error) {
-        console.error(`API Request failed: ${method} ${endpoint}`, error);
+        console.error(`API Request failed: ${method} ${endpoint} against ${baseUrl || DEFAULT_BASE_URL}`, error);
         throw error;
     }
 };
 
-export const startGame = (player1_id, player2_id) =>
+export const startGame = (player1_id, player2_id, baseUrl = null) =>
     request("/api/start_game", {
         method: "POST",
         data: {player1_id, player2_id},
+        baseUrl
     });
 
-export const makeMove = (fen, move) =>
+export const makeMove = (fen, move, baseUrl = null) =>
     request("/api/engine/make-move", {
         method: "POST",
         data: {fen, move},
+        baseUrl
     });
 
-export const getGameStatus = (game_id) =>
+export const getGameStatus = (game_id, baseUrl = null) =>
     request(`/api/game-status/${game_id}`, {
         method: "GET",
+        baseUrl
     });
 
-export const health = () =>
+export const health = (baseUrl = null) =>
     request("/api/health", {
         method: "GET",
+        baseUrl
     });
 
-export const bestMove = ({fen, moves, depth, movetime}) =>
+export const bestMove = ({fen, moves, depth, movetime}, baseUrl = null) =>
     request("/api/engine/best-move", {
         method: "POST",
         data: {fen, moves, depth, movetime},
+        baseUrl
     });
 
-export const printPosition = (fen) =>
+export const printPosition = (fen, baseUrl = null) =>
     request("/api/engine/print-position", {
         method: "POST",
         data: {fen},
+        baseUrl
     });
 
-export const runBenchmark = (options) =>
+export const runBenchmark = (options, baseUrl = null) =>
     request("/api/engine/bench", {
         method: "POST",
-        data: options
+        data: options,
+        baseUrl
     });
 
-export const cancelBenchmark = async () => {
-    await request(`/api/engine/cancel`, {method: "POST"});
+export const cancelBenchmark = async (baseUrl = null) => {
+    await request(`/api/engine/cancel`, {method: "POST", baseUrl});
 };
 
-export const go = ({fen, moves, options}) =>
+export const go = ({fen, moves, options}, baseUrl = null) =>
     request("/api/engine/go", {
         method: "POST",
         data: {fen, moves, options},
+        baseUrl
     });
 
-export const resetGame = () =>
+export const resetGame = (baseUrl = null) =>
     request("/api/engine/reset", {
         method: "POST",
+        baseUrl
     });
 
-export const analyze = (fen, depth = 10) =>
+export const analyze = (fen, depth = 10, baseUrl = null) =>
     request("/api/engine/analysis", {
         method: "POST",
-        data: {fen, depth}
+        data: {fen, depth},
+        baseUrl
     });
 
-export const startLichessBot = (token) =>
+export const startLichessBot = (token, baseUrl = null) =>
     request("/api/lichess/start", {
         method: "POST",
-        data: { token }
+        data: { token },
+        baseUrl
     });
 
-export const stopLichessBot = () =>
+export const stopLichessBot = (baseUrl = null) =>
     request("/api/lichess/stop", {
-        method: "POST"
+        method: "POST",
+        baseUrl
     });
 
-export const getLichessStatus = () =>
+export const getLichessStatus = (baseUrl = null) =>
     request("/api/lichess/status", {
-        method: "GET"
+        method: "GET",
+        baseUrl
     });
 
-export const createOpenChallenge = (limit, increment) =>
+export const createOpenChallenge = (limit, increment, baseUrl = null) =>
     request("/api/lichess/challenge/open", {
         method: "POST",
-        data: { limit, increment }
+        data: { limit, increment },
+        baseUrl
     });
 
-export const createAiChallenge = (level, limit, increment) =>
+export const createAiChallenge = (level, limit, increment, baseUrl = null) =>
     request("/api/lichess/challenge/ai", {
         method: "POST",
-        data: { level, limit, increment }
+        data: { level, limit, increment },
+        baseUrl
     });
 
-export const createChallenge = (username, limit, increment) =>
+export const createChallenge = (username, limit, increment, baseUrl = null) =>
     request("/api/lichess/challenge", {
         method: "POST",
-        data: { username, limit, increment }
+        data: { username, limit, increment },
+        baseUrl
     });
 
-export const challengeWeakestBot = (limit, increment) =>
+export const challengeWeakestBot = (limit, increment, baseUrl = null) =>
     request("/api/lichess/challenge/weakest", {
         method: "POST",
-        data: { limit, increment }
+        data: { limit, increment },
+        baseUrl
+    });
+
+// --- Autoplay Endpoints ---
+export const startAutoplay = (options, baseUrl = null) =>
+    request("/api/lichess/autoplay/start", {
+        method: "POST",
+        data: options,
+        baseUrl
+    });
+
+export const stopAutoplay = (baseUrl = null) =>
+    request("/api/lichess/autoplay/stop", {
+        method: "POST",
+        baseUrl
+    });
+
+export const getAutoplayStatus = (baseUrl = null) =>
+    request("/api/lichess/autoplay/status", {
+        method: "GET",
+        baseUrl
+    });
+
+export const getOpenings = (baseUrl = null) =>
+    request("/api/openings", {
+        method: "GET",
+        baseUrl
+    });
+
+export const setEngineOption = (name, value, baseUrl = null) =>
+    request("/api/engine/setoption", {
+        method: "POST",
+        data: { name, value },
+        baseUrl
     });

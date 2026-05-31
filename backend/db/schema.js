@@ -36,3 +36,17 @@ export const gameMoves = sqliteTable("game_moves", {
         gameIdx: index("game_idx").on(table.gameId),
     };
 });
+
+export const moveEvals = sqliteTable("move_evals", {
+    id: integer("id").primaryKey({autoIncrement: true}),
+    gameId: integer("game_id").notNull().references(() => games.id, {onDelete: "cascade"}),
+    ply: integer("ply").notNull(),
+    bestUci: text("best_uci"),
+    bestCp: integer("best_cp"),
+    playedCp: integer("played_cp"),
+    cpLoss: integer("cp_loss"),
+    isMate: integer("is_mate").default(0),
+    classification: text("classification"),
+}, (table) => ({
+    gameIdx: index("move_evals_game_idx").on(table.gameId),
+}));

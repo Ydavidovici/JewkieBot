@@ -69,6 +69,7 @@ class MockEngine extends EventEmitter {
         this.start = mock(async () => {});
         this.uciNewGame = mock(async () => {});
         this.position = mock(async () => {});
+        this.setOption = mock(async () => {});
         this.go = mock(async () => "e2e4");
         this.stop = mock(async () => {});
     }
@@ -127,7 +128,7 @@ let engine;
 let originalFetch;
 
 function makeBot(options = {}) {
-    return new LichessBot("fake_token", () => engine, options);
+    return new LichessBot("fake_token", () => engine, { apiSpacingMs: 0, challengeSpacingMs: 0, ...options });
 }
 
 beforeEach(() => {
@@ -1022,6 +1023,49 @@ describe("DB integration", () => {
         });
     });
 
+    it("emits a notifier event on game-over with status/winner/result", async () => {
+        const events = [];
+        const notifier = {
+            info:  (subject, details) => events.push({level: "info",  subject, details}),
+            warn:  (subject, details) => events.push({level: "warn",  subject, details}),
+            error: (subject, details) => events.push({level: "error", subject, details}),
+            fatal: (subject, details) => events.push({level: "fatal", subject, details}),
+        };
+        const localBot = new LichessBot("fake_token", () => engine, {notifier});
+
+        const gameId = "notify_over";
+        const gf = makeGameFull(gameId, "bot", { white: "opp", black: "bot" });
+        const gs = {
+            type: "gameState",
+            moves: "e2e4 e7e5",
+            wtime: 59000, btime: 60000, winc: 0, binc: 0,
+            status: "mate",
+            winner: "white",
+        };
+
+        global.fetch = mock(async (url) => {
+            if (url.includes("/account")) return { ok: true, json: async () => ({ id: "bot" }) };
+            if (url.includes("/stream/event")) return { ok: true, body: createMockStream([{ type: "gameStart", game: { id: gameId } }]) };
+            if (url.includes(`/bot/game/stream/${gameId}`)) return { ok: true, body: createMockStream([gf, gs]) };
+            if (url.includes("/move/")) return { ok: true };
+            if (url.includes("/resign")) return { ok: true };
+            return { ok: false };
+        });
+
+        await localBot.start();
+
+        await waitFor(() => {
+            const gameOverEvent = events.find(e => typeof e.subject === "string" && e.subject.startsWith("[Game] Game over"));
+            expect(gameOverEvent).toBeDefined();
+            expect(gameOverEvent.subject).toContain(gameId);
+            expect(gameOverEvent.details).toMatchObject({
+                status: "mate",
+                winner: "white",
+                result: "1-0",
+            });
+        });
+    });
+
     it("writes 0-1 result when black wins", async () => {
         const gameId = "db6";
         const gf = makeGameFull(gameId, "bot", { white: "opp", black: "bot" });
@@ -1216,41 +1260,41 @@ describe("Pure helpers — normalizeMove", () => {
 });
 
 describe("Pure helpers — computeMoveTime tier boundaries", () => {
-    it("just-below 60_000 total → 1_000ms cap", () => {
-        expect(computeMoveTime(59_999, 0, 59_999)).toBeLessThanOrEqual(1_000);
+    it("just-below 60_000 total → 1_500ms cap", () => {
+        expect(computeMoveTime(59_999, 0, 59_999)).toBeLessThanOrEqual(1_500);
     });
-    it("exactly 60_000 total → 2_000ms cap", () => {
+    it("exactly 60_000 total → 4_000ms cap", () => {
         const t = computeMoveTime(60_000, 0, 60_000);
-        expect(t).toBeLessThanOrEqual(2_000);
-        expect(t).toBeGreaterThan(1_000);
+        expect(t).toBeLessThanOrEqual(4_000);
+        expect(t).toBeGreaterThan(1_500);
     });
-    it("just-below 180_000 total → 2_000ms cap", () => {
-        expect(computeMoveTime(179_999, 0, 179_999)).toBeLessThanOrEqual(2_000);
+    it("just-below 180_000 total → 4_000ms cap", () => {
+        expect(computeMoveTime(179_999, 0, 179_999)).toBeLessThanOrEqual(4_000);
     });
-    it("exactly 180_000 total → 5_000ms cap", () => {
+    it("exactly 180_000 total → 12_000ms cap", () => {
         const t = computeMoveTime(180_000, 0, 180_000);
-        expect(t).toBeLessThanOrEqual(5_000);
-        expect(t).toBeGreaterThan(2_000);
+        expect(t).toBeLessThanOrEqual(12_000);
+        expect(t).toBeGreaterThan(4_000);
     });
-    it("just-below 480_000 → 5_000ms cap", () => {
-        expect(computeMoveTime(479_999, 0, 479_999)).toBeLessThanOrEqual(5_000);
+    it("just-below 480_000 → 12_000ms cap", () => {
+        expect(computeMoveTime(479_999, 0, 479_999)).toBeLessThanOrEqual(12_000);
     });
-    it("exactly 480_000 → 15_000ms cap", () => {
+    it("exactly 480_000 → 30_000ms cap", () => {
         const t = computeMoveTime(480_000, 0, 480_000);
-        expect(t).toBeLessThanOrEqual(15_000);
-        expect(t).toBeGreaterThan(5_000);
+        expect(t).toBeLessThanOrEqual(30_000);
+        expect(t).toBeGreaterThan(12_000);
     });
-    it("just-below 1_500_000 → 15_000ms cap", () => {
-        expect(computeMoveTime(1_499_999, 0, 1_499_999)).toBeLessThanOrEqual(15_000);
+    it("just-below 1_500_000 → 30_000ms cap", () => {
+        expect(computeMoveTime(1_499_999, 0, 1_499_999)).toBeLessThanOrEqual(30_000);
     });
-    it("exactly 1_500_000 → 60_000ms cap", () => {
+    it("exactly 1_500_000 → 120_000ms cap", () => {
         const t = computeMoveTime(1_500_000, 0, 1_500_000);
-        expect(t).toBeLessThanOrEqual(60_000);
-        expect(t).toBeGreaterThan(15_000);
+        expect(t).toBeLessThanOrEqual(120_000);
+        expect(t).toBeGreaterThan(30_000);
     });
     it("totalTimeMs decouples cap from remainingMs (small remaining, large total → larger cap)", () => {
         const t = computeMoveTime(3_000, 0, 600_000);
-        const safetyOnly = Math.floor(3_000 * 0.8);
+        const safetyOnly = Math.floor(3_000 * 0.85);
         expect(t).toBeLessThanOrEqual(safetyOnly);
         expect(t).toBeGreaterThanOrEqual(200);
     });
@@ -1268,8 +1312,8 @@ describe("Pure helpers — computeMoveTime tier boundaries", () => {
     });
     it("estimate dominates when small (low remaining, low cap)", () => {
         const t = computeMoveTime(30_000, 0, 30_000);
-        const estimate = Math.floor(30_000 / 30 + 0);
-        expect(t).toBe(Math.max(200, Math.min(estimate, 1_000, Math.floor(30_000 * 0.8))));
+        const estimate = Math.floor(30_000 / 20 + 0);
+        expect(t).toBe(Math.max(200, Math.min(estimate, 1_500, Math.floor(30_000 * 0.85))));
     });
 });
 
@@ -1680,7 +1724,7 @@ describe("cancelChallenge", () => {
 
 describe("huntWeakestBot", () => {
     function makeHuntBot() {
-        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
+        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
         b.botProfile = "self";
         return b;
     }
@@ -1739,7 +1783,7 @@ describe("huntWeakestBot", () => {
         });
         const b = makeHuntBot();
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow();
-        expect(tried).toEqual(["Weak", "Mid", "Strong"]);
+        expect(tried).toEqual(["Weak", "Mid"]);
     });
 
     it("returns success when a game shows up in activeGames during polling", async () => {
@@ -2096,7 +2140,7 @@ describe("playGame — missing variant defaults to 'standard'", () => {
 });
 
 describe("huntWeakestBot — extra coverage", () => {
-    it("slices to top 10 candidates even when more eligible bots exist", async () => {
+    it("slices to top 2 candidates even when more eligible bots exist", async () => {
         const bots = Array.from({ length: 15 }, (_, i) => ({
             id: `b${i}`, username: `Bot${i}`,
             perfs: { blitz: { rating: 1000 + i * 10 } },
@@ -2109,12 +2153,12 @@ describe("huntWeakestBot — extra coverage", () => {
             if (url.includes("/cancel")) return { ok: true };
             return { ok: false };
         });
-        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
+        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
         b.botProfile = "self";
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow("Hunt failed");
-        expect(tried).toHaveLength(10);
-        // 10 weakest = Bot0..Bot9
-        expect(tried).toEqual(["Bot0", "Bot1", "Bot2", "Bot3", "Bot4", "Bot5", "Bot6", "Bot7", "Bot8", "Bot9"]);
+        expect(tried).toHaveLength(2);
+        // 2 weakest = Bot0..Bot1
+        expect(tried).toEqual(["Bot0", "Bot1"]);
     });
 
     it("continues to next candidate when a challenge fetch THROWS (network)", async () => {
@@ -2134,7 +2178,7 @@ describe("huntWeakestBot — extra coverage", () => {
             if (url.includes("/cancel")) return { ok: true };
             return { ok: false };
         });
-        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
+        const b = new LichessBot("fake_token", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
         b.botProfile = "self";
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow("Hunt failed");
         expect(tried).toEqual(["A", "B"]);
@@ -2173,7 +2217,7 @@ describe("Hunt decline cool-down", () => {
             if (url.includes("/cancel")) return { ok: true };
             return { ok: false };
         });
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
         b.botProfile = "self";
         b._markDeclined("A");
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow("Hunt failed");
@@ -2190,7 +2234,7 @@ describe("Hunt decline cool-down", () => {
             if (url.includes("/cancel")) return { ok: true };
             return { ok: false };
         });
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
         b.botProfile = "self";
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow("Hunt failed");
         expect(b._inDeclineCooldown("A")).toBe(true);
@@ -2203,7 +2247,7 @@ describe("Hunt decline cool-down", () => {
             if (url.match(/\/api\/challenge\/A$/)) return { ok: false };
             return { ok: false };
         });
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
         b.botProfile = "self";
         await expect(b.huntWeakestBot(60, 0)).rejects.toThrow();
         expect(b._inDeclineCooldown("A")).toBe(true);
@@ -2221,7 +2265,7 @@ describe("Hunt decline cool-down", () => {
             }
             return { ok: false };
         });
-        botRef = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
+        botRef = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, declineCooldownMs: 60_000 });
         botRef.botProfile = "self";
         const result = await botRef.huntWeakestBot(60, 0);
         expect(result.status).toBe("success");
@@ -2255,7 +2299,7 @@ function mockNearRatingFetch(myRating, bots) {
 
 describe("huntNearRating — auto-widen window", () => {
     function makeBot(opts = {}) {
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, ...opts });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, ...opts });
         b.botProfile = "self";
         return b;
     }
@@ -2436,7 +2480,7 @@ describe("huntNearRating — auto-widen window", () => {
 
 describe("Lichess 429 rate-limit handling", () => {
     function makeBot(opts = {}) {
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, ...opts });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50, ...opts });
         b.botProfile = "self";
         return b;
     }
@@ -2491,7 +2535,7 @@ describe("Lichess 429 rate-limit handling", () => {
         const b = makeBot();
         // The pool is shuffled, so we can't predict which bot trips it. Just
         // verify: after a 429, the loop stops (tried.length <= position of 429).
-        await expect(b.huntNearRating(180, 0, true)).rejects.toBeInstanceOf(LichessRateLimited);
+        await expect(b.huntNearRating(180, 0, true, { maxAttempts: 3 })).rejects.toBeInstanceOf(LichessRateLimited);
         expect(tried.length).toBeLessThanOrEqual(3);
         // No bot should be in cool-down (we either accepted them, or got 429).
         expect(b.recentlyDeclined.size).toBe(0);
@@ -2581,8 +2625,8 @@ describe("Lichess 429 rate-limit handling", () => {
             if (url.includes("/cancel")) return { ok: true };
             return { ok: false };
         });
-        const b = makeBot({ challengeSpacingMs: 80 });
-        await expect(b.huntNearRating(180, 0, true)).rejects.toThrow("Hunt failed");
+        const b = makeBot({ apiSpacingMs: 0, challengeSpacingMs: 80 });
+        await expect(b.huntNearRating(180, 0, true, { maxAttempts: 2 })).rejects.toThrow("Hunt failed");
         expect(gaps.length).toBeGreaterThanOrEqual(1);
         // Allow some scheduler slop; we just want to confirm the delay fired.
         for (const g of gaps) expect(g).toBeGreaterThanOrEqual(70);
@@ -2605,7 +2649,7 @@ describe("Autoplay respects LichessRateLimited backoff", () => {
             if (url.match(/\/api\/challenge\/A$/)) return rateLimitResponse(30);
             return { ok: false };
         });
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
         b.botProfile = "self";
         b.autoplay = { limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, currentBackoffMs: 0, huntInFlight: false, timer: null };
 
@@ -2622,21 +2666,21 @@ describe("Autoplay respects LichessRateLimited backoff", () => {
         b.stopAutoplay();
     });
 
-    it("non-429 errors still use exponential backoff", async () => {
+    it("non-429 errors still use exponential backoff starting at 30s", async () => {
         global.fetch = mock(async (url) => {
             if (url.includes("/api/account")) return { ok: true, json: async () => ({ perfs: { blitz: { rating: 1800 } } }) };
             if (url.includes("/bot/online")) return { ok: false, statusText: "503" };
             return { ok: false };
         });
-        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
+        const b = new LichessBot("t", () => engine, { huntPollIntervalMs: 1, apiSpacingMs: 0, challengeSpacingMs: 0, huntAcceptTimeoutMs: 50 });
         b.botProfile = "self";
         b.autoplay = { limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, currentBackoffMs: 0, huntInFlight: false, timer: null };
 
         b._tickAutoplay();
         await new Promise(r => setTimeout(r, 50));
 
-        // First failure: 5s
-        expect(b.autoplay?.currentBackoffMs).toBe(5000);
+        // First failure: 30s
+        expect(b.autoplay?.currentBackoffMs).toBe(30_000);
         b.stopAutoplay();
     });
 });
@@ -2653,7 +2697,7 @@ describe("Pure helpers — extra", () => {
 
     it("computeMoveTime clamps a huge estimate to the cap", () => {
         const t = computeMoveTime(1_000_000, 0, 180_000);
-        expect(t).toBeLessThanOrEqual(5_000);
+        expect(t).toBeLessThanOrEqual(12_000);
     });
 });
 
@@ -2719,6 +2763,154 @@ describe("saveNewMoves — progressive multi-event sequence", () => {
         expect(flat.filter(m => m.ply === 1 && m.uci === "e2e4")).toHaveLength(1);
         expect(flat.filter(m => m.ply === 2 && m.uci === "e7e5")).toHaveLength(1);
         expect(flat.filter(m => m.ply === 3 && m.uci === "g1f3")).toHaveLength(1);
+    });
+});
+
+describe("Rate limiting — _setRateLimit / _loadRateLimitState", () => {
+    it("every new LichessBot instance starts with rateLimitConsecutiveHits=0 (no cross-session bleed)", () => {
+        // The consecutive-hit counter must NOT carry over from a previous session.
+        // This is guaranteed by the constructor initialising it to 0 and by
+        // _loadRateLimitState not restoring it from disk. If either breaks, the
+        // multiplier reaches 16× after just 5 restarts while rate-limited.
+        const b = new LichessBot("t", () => engine);
+        expect(b.rateLimitConsecutiveHits).toBe(0);
+        // Even if we manually dirty the counter and create another instance, it starts clean.
+        b.rateLimitConsecutiveHits = 99;
+        const b2 = new LichessBot("t", () => engine);
+        expect(b2.rateLimitConsecutiveHits).toBe(0);
+    });
+
+    it("first 429 after recovery gives 1× Retry-After backoff (counter starts at 0)", () => {
+        const b = new LichessBot("t", () => engine);
+        expect(b.rateLimitConsecutiveHits).toBe(0);
+        b._setRateLimit(60);
+        expect(b.rateLimitConsecutiveHits).toBe(1);
+        // hit #1 → exp=0 → mult=1 → 60s
+        expect(b._rateLimitRemainingSec()).toBeGreaterThan(55);
+        expect(b._rateLimitRemainingSec()).toBeLessThanOrEqual(60);
+    });
+
+    it("backoff doubles each consecutive hit up to the 16× cap", () => {
+        const b = new LichessBot("t", () => engine, { rateLimitMaxMultiplier: 16 });
+        b._setRateLimit(60); // hit 1 → 60s
+        b._setRateLimit(60); // hit 2 → 120s
+        b._setRateLimit(60); // hit 3 → 240s
+        b._setRateLimit(60); // hit 4 → 480s
+        b._setRateLimit(60); // hit 5 → 960s (16×)
+        expect(b.rateLimitConsecutiveHits).toBe(5);
+        expect(b._rateLimitRemainingSec()).toBeGreaterThan(950);
+        expect(b._rateLimitRemainingSec()).toBeLessThanOrEqual(960);
+    });
+
+    it("_onSuccessfulPost resets the consecutive-hit counter", () => {
+        const b = new LichessBot("t", () => engine);
+        b._setRateLimit(60);
+        b._setRateLimit(60);
+        expect(b.rateLimitConsecutiveHits).toBe(2);
+        b._onSuccessfulPost();
+        expect(b.rateLimitConsecutiveHits).toBe(0);
+    });
+});
+
+describe("Challenge spacing — _raceChallenges paces challenge POSTs", () => {
+    it("spaces consecutive challenges by at least challengeSpacingMs", async () => {
+        const spacing = 100; // use 100ms for test speed
+        const b = new LichessBot("fake_token", () => engine, {
+            apiSpacingMs: 0, challengeSpacingMs: spacing,
+            huntPollIntervalMs: 1,
+            huntAcceptTimeoutMs: 10,
+        });
+        b.botProfile = "self";
+
+        const postTimes = [];
+        global.fetch = mock(async (url) => {
+            if (url.includes("/bot/online")) {
+                return { ok: true, body: createMockStream([
+                    { id: "a", username: "A", perfs: { blitz: { rating: 1000 } } },
+                    { id: "b", username: "B", perfs: { blitz: { rating: 1100 } } },
+                    { id: "c", username: "C", perfs: { blitz: { rating: 1200 } } },
+                ])};
+            }
+            if (url.includes("/api/account")) return { ok: true, json: async () => ({ id: "self", perfs: { blitz: { rating: 1050 } } }) };
+            const m = url.match(/\/api\/challenge\/([^/]+)$/);
+            if (m) {
+                postTimes.push(Date.now());
+                return { ok: true, json: async () => ({ id: "c" + m[1] }) };
+            }
+            if (url.includes("/cancel")) return { ok: true };
+            return { ok: false };
+        });
+
+        await expect(b.huntNearRating(180, 2)).rejects.toThrow();
+
+        // Every gap between consecutive challenge POSTs should be >= spacing
+        for (let i = 1; i < postTimes.length; i++) {
+            expect(postTimes[i] - postTimes[i - 1]).toBeGreaterThanOrEqual(spacing - 5); // 5ms tolerance
+        }
+    });
+
+    it("default challengeSpacingMs is 2000ms", () => {
+        const b = new LichessBot("t", () => engine);
+        expect(b.challengeSpacingMs).toBe(2000);
+    });
+});
+
+describe("huntNearRating — maxAttempts default", () => {
+    it("challenges at most 2 candidates per hunt by default", async () => {
+        const b = new LichessBot("fake_token", () => engine, {
+            apiSpacingMs: 0, challengeSpacingMs: 0,
+            huntPollIntervalMs: 1,
+            huntAcceptTimeoutMs: 10,
+        });
+        b.botProfile = "self";
+
+        const challenged = [];
+        global.fetch = mock(async (url) => {
+            if (url.includes("/bot/online")) {
+                const bots = Array.from({length: 20}, (_, i) => ({
+                    id: `bot${i}`, username: `Bot${i}`,
+                    perfs: { blitz: { rating: 1000 + i * 10 } },
+                }));
+                return { ok: true, body: createMockStream(bots) };
+            }
+            if (url.includes("/api/account")) return { ok: true, json: async () => ({ id: "self", perfs: { blitz: { rating: 1050 } } }) };
+            const m = url.match(/\/api\/challenge\/([^/]+)$/);
+            if (m) { challenged.push(m[1]); return { ok: true, json: async () => ({ id: "c" + m[1] }) }; }
+            if (url.includes("/cancel")) return { ok: true };
+            return { ok: false };
+        });
+
+        await expect(b.huntNearRating(180, 2)).rejects.toThrow();
+        expect(challenged.length).toBeLessThanOrEqual(2);
+    });
+});
+
+describe("huntWeakestBot — candidate limit", () => {
+    it("challenges at most 2 candidates", async () => {
+        const b = new LichessBot("fake_token", () => engine, {
+            apiSpacingMs: 0, challengeSpacingMs: 0,
+            huntPollIntervalMs: 1,
+            huntAcceptTimeoutMs: 10,
+        });
+        b.botProfile = "self";
+
+        const challenged = [];
+        global.fetch = mock(async (url) => {
+            if (url.includes("/bot/online")) {
+                const bots = Array.from({length: 20}, (_, i) => ({
+                    id: `bot${i}`, username: `Bot${i}`,
+                    perfs: { blitz: { rating: 1000 + i * 10 } },
+                }));
+                return { ok: true, body: createMockStream(bots) };
+            }
+            const m = url.match(/\/api\/challenge\/([^/]+)$/);
+            if (m) { challenged.push(m[1]); return { ok: true, json: async () => ({ id: "c" + m[1] }) }; }
+            if (url.includes("/cancel")) return { ok: true };
+            return { ok: false };
+        });
+
+        await expect(b.huntWeakestBot(180, 2)).rejects.toThrow("Hunt failed");
+        expect(challenged.length).toBeLessThanOrEqual(2);
     });
 });
 

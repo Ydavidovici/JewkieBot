@@ -84,7 +84,7 @@ mock.module("../src/engineManager.js", () => ({
     EngineCapReached: MockEngineCapReached,
 }));
 
-mock.module("../src/lichessBot.js", () => ({ LichessBot: MockLichessBot }));
+
 
 const { createApp } = await import("../src/server.js");
 
@@ -120,6 +120,7 @@ beforeEach(async () => {
         mainEnginePath: "/fake/path/myengine",
         maxConcurrentGames: 4,
         getToken: () => tokenValue,
+        BotClass: MockLichessBot,
     });
 
     await new Promise((resolve) => {

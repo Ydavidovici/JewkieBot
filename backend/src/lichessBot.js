@@ -2,6 +2,7 @@ import {eq} from "drizzle-orm";
 import {db} from "../db/db.js";
 import {players, games, gameMoves} from "../db/schema.js";
 import {nullNotifier} from "./notifier.js";
+import {OPENINGS} from "./openings.js";
 
 export class LichessRateLimited extends Error {
     constructor(retryAfterSec) {
@@ -11,6 +12,7 @@ export class LichessRateLimited extends Error {
     }
 }
 
+// this really normalizes promotion moves - so e7e8q becomes e7e8
 export function normalizeMove(move) {
     if (move && move.length === 5) {
         return move.slice(0, 4) + move[4].toLowerCase();
@@ -25,15 +27,18 @@ export function computeMoveTime(remainingMs, incMs, totalTimeMs) {
 
     const total = totalTimeMs ?? remainingMs;
 
+    // Previously caps were tuned so conservatively that on a 3-minute game we'd
+    // end with 2:45 still on the clock — the engine was barely thinking. These
+    // budgets give the engine real headroom per move.
     let cap;
-    if      (total >= 1_500_000) cap = 60_000;
-    else if (total >=   480_000) cap = 15_000;
-    else if (total >=   180_000) cap =  5_000;
-    else if (total >=    60_000) cap =  2_000;
-    else                         cap =  1_000;
+    if      (total >= 1_500_000) cap = 120_000;
+    else if (total >=   480_000) cap =  30_000;
+    else if (total >=   180_000) cap =  12_000;
+    else if (total >=    60_000) cap =   4_000;
+    else                         cap =   1_500;
 
-    const estimate = Math.floor(remainingMs / 30 + inc * 0.85);
-    const safety   = Math.floor(remainingMs * 0.8);
+    const estimate = Math.floor(remainingMs / 20 + inc * 0.95);
+    const safety   = Math.floor(remainingMs * 0.85);
 
     return Math.max(200, Math.min(estimate, cap, safety));
 }
@@ -55,36 +60,29 @@ export class LichessBot {
         this.reconnectDelayMs = options.reconnectDelayMs ?? 5000;
         this.notifier = options.notifier ?? nullNotifier;
 
-        // Cool-down for bots that ignored our challenges. We keep a map of
-        // username -> expiresAt so the pool builder can skip them on the next
-        // hunt. Without this we re-challenge the same handful of unresponsive
-        // bots on every tick. 15min is short enough that a bot that JUST came
-        // online won't be punished for a stale ignore, but long enough that
-        // we don't spam an obvious non-responder.
+        // Cool-down for bots that ignored our challenges. We keep a map of username -> expiresAt so the pool builder can skip them on the next hunt.
         this.declineCooldownMs = options.declineCooldownMs ?? 15 * 60 * 1000;
+        this.apiSpacingMs = options.apiSpacingMs ?? (process.env.NODE_ENV === "test" ? 0 : 1000);
+        this._now = options.now || (() => Date.now());
         this.recentlyDeclined = new Map();
 
-        // Stagger between concurrent challenge POSTs. We fan out all candidates
-        // in parallel (so the first accepting bot wins quickly) but offset each
-        // by this many ms so we don't truly burst on Lichess's rate limit.
-        this.challengeSpacingMs = options.challengeSpacingMs ?? 250;
-        // How long to wait, after all candidates are posted, for any of them
-        // to accept before giving up on the whole pool.
-        this.huntAcceptTimeoutMs = options.huntAcceptTimeoutMs ?? 8000;
+        // Minimum gap between consecutive challenge POSTs within one hunt.
+        // Increased to 10 seconds to strictly respect Lichess's burst limits.
+        this.challengeSpacingMs = options.challengeSpacingMs ?? 2000;
+        // How long to wait, after all candidates are posted, for any of them to accept before giving up on the whole pool.
+        this.huntAcceptTimeoutMs = options.huntAcceptTimeoutMs ?? 5000;
+        this.lastChallengeTime = 0;
         // Fallback retry-after when Lichess sends a 429 without a Retry-After
         // header. Kept conservative so we don't immediately re-trigger.
-        this.defaultRetryAfterSec = options.defaultRetryAfterSec ?? 60;
+        this.defaultRetryAfterSec = options.defaultRetryAfterSec ?? 150;
 
         // Cross-call rate-limit memory. When Lichess returns 429, any code
         // path that issues a challenge (autoplay AND manual /api/lichess/...
         // endpoints) checks this before posting so we don't burn 429s on
         // every caller during the cool-off window.
         this.rateLimitedUntil = 0;
-        // Lichess's Retry-After is optimistic — they often 429 us again right
-        // after it expires. Track consecutive hits and double the cool-off
-        // each time (1x, 2x, 4x, ... capped). Reset on any successful POST.
         this.rateLimitConsecutiveHits = 0;
-        this.rateLimitMaxMultiplier = options.rateLimitMaxMultiplier ?? 16;
+        this.rateLimitMaxMultiplier = options.rateLimitMaxMultiplier ?? 10;
 
         this.authHeader = {Authorization: `Bearer ${this.token}`};
         this.formHeaders = {
@@ -101,12 +99,13 @@ export class LichessBot {
 
         this.dbGameIds = new Map();
         this.savedPlies = new Map();
+        this.gameOpenings = new Map();
 
         // Autoplay: when enabled, the bot fills free slots via huntWeakestBot.
         this.autoplay = null; // {limit, increment, rated, target, backoffMs, timer, huntInFlight}
     }
 
-    startAutoplay({limit = 180, increment = 2, rated = true, target = 1, mode = "near", window = 200} = {}) {
+    startAutoplay({limit = 180, increment = 2, rated = true, target = 1, mode = "near", window = 200, whiteOpeningId = null, blackOpeningId = null} = {}) {
         this.stopAutoplay();
 
         // target = how many active games we'd like to keep going at once.
@@ -120,13 +119,18 @@ export class LichessBot {
             target: cappedTarget,
             mode,       // "near" (default) or "weakest"
             window,     // only used when mode === "near"
+            whiteOpeningId,
+            blackOpeningId,
             currentBackoffMs: 0,
             timer: null,
             huntInFlight: false,
         };
 
-        this.notifier.info("Autoplay enabled", {limit, increment, rated, target: cappedTarget, mode, window});
-        console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""})`);
+        this.notifier.info("[Autoplay] Autoplay enabled", {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId});
+        const wStr = whiteOpeningId ? `white=${whiteOpeningId}` : "";
+        const bStr = blackOpeningId ? `${wStr ? ", " : ""}black=${blackOpeningId}` : "";
+        const optStr = wStr || bStr ? `, ${wStr}${bStr}` : "";
+        console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optStr})`);
         this._tickAutoplay();
     }
 
@@ -134,14 +138,14 @@ export class LichessBot {
         if (!this.autoplay) return;
         if (this.autoplay.timer) clearTimeout(this.autoplay.timer);
         this.autoplay = null;
-        this.notifier.info("Autoplay disabled");
+        this.notifier.info("[Autoplay] Autoplay disabled");
         console.log("[Autoplay] Disabled");
     }
 
     autoplayStatus() {
         if (!this.autoplay) return {enabled: false};
-        const {limit, increment, rated, target, mode, window, currentBackoffMs, huntInFlight} = this.autoplay;
-        return {enabled: true, limit, increment, rated, target, mode, window, currentBackoffMs, huntInFlight, active: this.activeGames.size};
+        const {limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, currentBackoffMs, huntInFlight} = this.autoplay;
+        return {enabled: true, limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, currentBackoffMs, huntInFlight, active: this.activeGames.size};
     }
 
     // Kick the autoplay loop. Idempotent. Called after every game ends and on a
@@ -163,7 +167,7 @@ export class LichessBot {
         if (this._isRateLimited()) {
             const remainingSec = this._rateLimitRemainingSec();
             const waitMs = remainingSec * 1000 + 500;
-            console.log(`[Autoplay] Rate-limited; skipping tick, retry in ${remainingSec}s`);
+            this.notifier.warn("[Autoplay] Rate-limited; skipping tick", {remainingSec, waitMs});
             this.autoplay.timer = setTimeout(() => this._tickAutoplay(), waitMs);
             return;
         }
@@ -190,10 +194,10 @@ export class LichessBot {
                     // case Lichess sends a short Retry-After while we're
                     // already backing off for other reasons).
                     next = Math.max(err.retryAfterSec * 1000 + 500, this.autoplay.currentBackoffMs || 0);
-                    this.notifier.warn("Lichess rate limit", {retryAfterSec: err.retryAfterSec});
+                    this.notifier.warn("[Hunt] Lichess rate limit", {retryAfterSec: err.retryAfterSec});
                 } else {
-                    // Exponential backoff: 5s, 10s, 20s, ... capped at 5 min.
-                    next = this.autoplay.currentBackoffMs === 0 ? 5_000 : Math.min(this.autoplay.currentBackoffMs * 2, 300_000);
+                    // Exponential backoff: 30s, 60s, 120s.
+                    next = this.autoplay.currentBackoffMs === 0 ? 30_000 : Math.min(this.autoplay.currentBackoffMs * 2, 120_000);
                 }
                 this.autoplay.currentBackoffMs = next;
                 console.log(`[Autoplay] Hunt failed (${err.message}); retrying in ${next / 1000}s`);
@@ -201,7 +205,7 @@ export class LichessBot {
             .finally(() => {
                 if (!this.autoplay) return;
                 this.autoplay.huntInFlight = false;
-                const wait = this.autoplay.currentBackoffMs || 1_000;
+                const wait = this.autoplay.currentBackoffMs || 10_000;
                 this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
             });
     }
@@ -212,10 +216,16 @@ export class LichessBot {
             const file = Bun.file("lichess-rate-limit.json");
             if (await file.exists()) {
                 const data = await file.json();
-                if (data.rateLimitedUntil && data.rateLimitedUntil > Date.now()) {
+                if (data.rateLimitedUntil && data.rateLimitedUntil > this._now()) {
                     this.rateLimitedUntil = data.rateLimitedUntil;
-                    this.rateLimitConsecutiveHits = data.rateLimitConsecutiveHits || 0;
-                    const remainingSec = Math.ceil((this.rateLimitedUntil - Date.now()) / 1000);
+                    // Do NOT restore consecutive-hit counter across restarts.
+                    // The counter drives exponential backoff, but after a restart
+                    // Lichess's rate-limit window has likely reset. Carrying the
+                    // counter over means every restart-while-rate-limited pushes
+                    // the multiplier higher (we saw hit #15 → 16-min backoffs).
+                    // The saved rateLimitedUntil already encodes how long to wait;
+                    // once that expires we start fresh at 1×.
+                    const remainingSec = Math.ceil((this.rateLimitedUntil - this._now()) / 1000);
                     console.log(`[Bot] Restored rate limit state from disk: rate-limited for ${remainingSec}s`);
                 }
             }
@@ -227,10 +237,8 @@ export class LichessBot {
     async _saveRateLimitState() {
         if (process.env.NODE_ENV === "test") return;
         try {
-            const data = {
-                rateLimitedUntil: this.rateLimitedUntil,
-                rateLimitConsecutiveHits: this.rateLimitConsecutiveHits,
-            };
+            // Only persist the expiry timestamp — not the consecutive-hit counter.
+            const data = {rateLimitedUntil: this.rateLimitedUntil};
             await Bun.write("lichess-rate-limit.json", JSON.stringify(data));
         } catch (err) {
             console.error("[Bot] Failed to save rate limit state:", err);
@@ -241,16 +249,15 @@ export class LichessBot {
         if (this.botProfile) return true;
         if (this._isRateLimited()) return false;
         try {
-            const res = await fetch("https://lichess.org/api/account", {
-                headers: this.authHeader,
-            });
-            if (res.status === 429) {
-                const retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
-                const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
-                this._setRateLimit(seconds);
-                return false;
+            let res;
+            try {
+                res = await this._lichessFetch("https://lichess.org/api/account", {
+                    headers: this.authHeader,
+                });
+            } catch (err) {
+                if (err instanceof LichessRateLimited) return false;
             }
-            if (res.ok) {
+            if (res && res.ok) {
                 const profile = await res.json();
                 this.botProfile = profile.id;
                 console.log(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
@@ -266,29 +273,29 @@ export class LichessBot {
 
         if (this._isRateLimited()) {
             this.botProfile = null;
-            console.warn(`[Bot] Restored rate limit state from disk. Starting in rate-limited state for ${this._rateLimitRemainingSec()}s.`);
-            this.streamEvents();
+            const waitSec = this._rateLimitRemainingSec();
+            console.warn(`[Bot] Restored rate limit state from disk. Starting in rate-limited state for ${waitSec}s.`);
+            setTimeout(() => this.streamEvents(), waitSec * 1000);
             return;
         }
 
-        const res = await fetch("https://lichess.org/api/account", {
-            headers: this.authHeader,
-        });
-
-        if (!res.ok) {
-            if (res.status === 429) {
-                const retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
-                const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
-                this._setRateLimit(seconds);
-                this.botProfile = null;
-                console.warn(`[Bot] Started in rate-limited state. Will resolve profile in background.`);
-            } else {
+        try {
+            const res = await this._lichessFetch("https://lichess.org/api/account", {
+                headers: this.authHeader,
+            });
+            if (!res.ok) {
                 throw new Error(`Failed to fetch bot profile: Lichess returned HTTP ${res.status} (${res.statusText})`);
             }
-        } else {
             const profile = await res.json();
             this.botProfile = profile.id;
             console.log(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
+        } catch (err) {
+            if (err instanceof LichessRateLimited) {
+                this.botProfile = null;
+                console.warn(`[Bot] Started in rate-limited state. Will resolve profile in background.`);
+            } else {
+                throw err;
+            }
         }
 
         this.streamEvents();
@@ -326,22 +333,14 @@ export class LichessBot {
         console.log("[Bot] Listening for events...");
 
         try {
-            const res = await fetch("https://lichess.org/api/stream/event", {
+            const res = await this._lichessFetch("https://lichess.org/api/stream/event", {
                 headers: this.authHeader,
                 signal: this.eventController.signal,
             });
 
             if (!res.ok) {
                 console.error("[Bot] Event stream failed:", res.statusText);
-                let delay = this.reconnectDelayMs;
-                if (res.status === 429) {
-                    const retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
-                    const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
-                    this._setRateLimit(seconds);
-                    delay = (this._rateLimitRemainingSec() || seconds) * 1000;
-                    console.warn(`[Bot] Event stream rate-limited. Retrying in ${delay / 1000}s`);
-                }
-                setTimeout(() => this.streamEvents(), delay);
+                setTimeout(() => this.streamEvents(), this.reconnectDelayMs);
                 return;
             }
 
@@ -387,21 +386,23 @@ export class LichessBot {
 
         if (this.activeGames.size >= this.maxConcurrentGames) {
             console.log(`[Challenge ${challenge.id}] Declining — at max concurrent games (${this.maxConcurrentGames})`);
-            this.notifier.info(`Declining challenge ${challenge.id}`, {reason: "at_cap", active: this.activeGames.size});
+            this.notifier.info(`[Challenge] Declining challenge ${challenge.id}`, {reason: "at_cap", active: this.activeGames.size});
             await this.declineChallenge(challenge.id, "later");
             return;
         }
 
         console.log(`[Challenge ${challenge.id}] Accepting`);
-        await fetch(`https://lichess.org/api/challenge/${challenge.id}/accept`, {
+        await this._throttleGlobalChallenge();
+        await this._lichessFetch(`https://lichess.org/api/challenge/${challenge.id}/accept`, {
             method: "POST",
             headers: this.authHeader,
         });
     }
 
     async declineChallenge(challengeId, reason = "generic") {
+        await this._throttleGlobalChallenge();
         const body = new URLSearchParams({reason});
-        await fetch(`https://lichess.org/api/challenge/${challengeId}/decline`, {
+        await this._lichessFetch(`https://lichess.org/api/challenge/${challengeId}/decline`, {
             method: "POST",
             headers: this.formHeaders,
             body,
@@ -411,8 +412,9 @@ export class LichessBot {
     async playGame(gameId) {
         if (this.activeGames.has(gameId)) return;
         this.activeGames.add(gameId);
+        
         console.log(`[${gameId}] Game started.`);
-        this.notifier.info(`Game started: ${gameId}`, {active: this.activeGames.size, max: this.maxConcurrentGames});
+        this.notifier.info(`[Game] Game started: ${gameId}`, {active: this.activeGames.size, max: this.maxConcurrentGames});
 
         await this._ensureProfile().catch(() => {});
 
@@ -426,7 +428,7 @@ export class LichessBot {
             // EngineCapReached or any factory failure: don't try to play. Resign and bail.
             // Existing in-flight games keep running — we just don't add another.
             console.error(`[${gameId}] Engine factory rejected:`, err);
-            this.notifier.warn(`Refused to spawn engine for ${gameId}`, {message: err?.message});
+            this.notifier.warn(`[Game] Refused to spawn engine for ${gameId}`, {message: err?.message});
             try { await this.resignGame(gameId); } catch (_) {}
             this.activeGames.delete(gameId);
             this.gameControllers.delete(gameId);
@@ -436,7 +438,7 @@ export class LichessBot {
 
         engine.on("fatal_error", async (err) => {
             console.error(`[${gameId}] !! ENGINE FATAL ERROR !! Resigning game.`, err);
-            this.notifier.error(`Engine fatal in game ${gameId}`, {message: err?.message});
+            this.notifier.error(`[Game] Engine fatal in game ${gameId}`, {message: err?.message});
             try { await this.resignGame(gameId); } catch (_) {}
             gameController.abort();
         });
@@ -453,13 +455,18 @@ export class LichessBot {
         try {
             try {
                 await engine.start();
+                if (this.gameOpenings.get(gameId) === "balanced") {
+                    await engine.setOption("OwnBook", "true");
+                } else {
+                    await engine.setOption("OwnBook", "false");
+                }
             } catch (startErr) {
                 console.error(`[${gameId}] !! ENGINE START FAILED !! Resigning game.`, startErr);
                 try { await this.resignGame(gameId); } catch (_) {}
                 throw startErr;
             }
 
-            const res = await fetch(`https://lichess.org/api/bot/game/stream/${gameId}`, {
+            const res = await this._lichessFetch(`https://lichess.org/api/bot/game/stream/${gameId}`, {
                 headers: this.authHeader,
                 signal: gameController.signal,
             });
@@ -512,7 +519,14 @@ export class LichessBot {
                 }
 
                 if (status !== "started") {
+                    const result = mapResult(status, winner);
                     console.log(`[${gameId}] Game over: ${status}, winner: ${winner ?? "draw"}`);
+                    this.notifier.info(`[Game] Game over: ${gameId}`, {
+                        status,
+                        winner: winner ?? "draw",
+                        result,
+                        active: Math.max(0, this.activeGames.size - 1),
+                    });
                     await this.finalizeDbGame(gameId, status, winner);
                     gameController.abort();
                     return;
@@ -526,7 +540,7 @@ export class LichessBot {
                         consecutiveMoveFailures++;
                         if (consecutiveMoveFailures >= MAX_CONSECUTIVE_MOVE_FAILURES) {
                             console.error(`[${gameId}] Engine stuck (${consecutiveMoveFailures} consecutive move failures) — resigning.`);
-                            this.notifier.warn(`Engine stuck in ${gameId}, resigning`, {failures: consecutiveMoveFailures});
+                            this.notifier.warn(`[Game] Engine stuck in ${gameId}, resigning`, {failures: consecutiveMoveFailures});
                             try { await this.resignGame(gameId); } catch (_) {}
                             gameController.abort();
                             return;
@@ -543,19 +557,65 @@ export class LichessBot {
             try { await engine.stop(); } catch (e) { console.error(`[${gameId}] Engine stop error:`, e); }
             this.gameEngines.delete(gameId);
             this.activeGames.delete(gameId);
+            this.gameOpenings.delete(gameId);
             this.gameControllers.delete(gameId);
             console.log(`[${gameId}] Cleaned up.`);
             this._tickAutoplay();
         }
     }
 
-    // Returns true if the move was computed and accepted by Lichess; false
-    // otherwise. Caller (playGame) tracks consecutive failures and resigns
-    // if the engine appears stuck.
+    /**
+     * Returns true if the move was computed and accepted by Lichess; false
+     * otherwise. Caller (playGame) tracks consecutive failures and resigns
+     * if the engine appears stuck.
+     *
+     * @param {Object} engine - The chess engine instance
+     * @param {string} gameId - The ID of the current game
+     * @param {string} initialFen - The starting FEN position
+     * @param {string} movesStr - Space-separated list of previous moves
+     * @param {string} myColor - The color the bot is playing
+     * @param {Object} timeInfo - Information about the remaining time and increment
+     * @param {number} totalTimeMs - The total time allotted for the game
+     * @returns {Promise<boolean>} Success of the move
+     */
     async makeMove(engine, gameId, initialFen, movesStr, myColor, timeInfo, totalTimeMs) {
         console.log(`[${gameId}] My turn (${myColor}).`);
 
         const movesArray = movesStr.trim() === "" ? [] : movesStr.trim().split(" ");
+
+        // Specific Opening Logic for Autoplay
+        let currentOpeningId = this.gameOpenings.get(gameId);
+        if (!currentOpeningId) {
+            currentOpeningId = myColor === "w" || myColor === "white"
+                ? (this.autoplay?.whiteOpeningId || "balanced")
+                : (this.autoplay?.blackOpeningId || "balanced");
+
+            if (currentOpeningId === "random_tactical" || currentOpeningId === "random_positional") {
+                const targetStyle = currentOpeningId === "random_tactical" ? "tactical" : "positional";
+                const choices = Object.keys(OPENINGS).filter(k => OPENINGS[k].style === targetStyle && OPENINGS[k].type !== "category");
+                if (choices.length > 0) {
+                    currentOpeningId = choices[Math.floor(Math.random() * choices.length)];
+                }
+            }
+            this.gameOpenings.set(gameId, currentOpeningId);
+            console.log(`[${gameId}] Selected opening: ${currentOpeningId} for ${myColor}`);
+        }
+
+        if (currentOpeningId !== "balanced" && OPENINGS[currentOpeningId]) {
+            const expectedMoves = OPENINGS[currentOpeningId].moves;
+            let matches = true;
+            for (let i = 0; i < movesArray.length; i++) {
+                if (movesArray[i] !== expectedMoves[i]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches && movesArray.length < expectedMoves.length) {
+                const nextMove = expectedMoves[movesArray.length];
+                console.log(`[${gameId}] Forcing specific opening move: ${nextMove}`);
+                return await this.sendMove(gameId, nextMove);
+            }
+        }
 
         try {
             await engine.position(initialFen, movesArray);
@@ -590,12 +650,14 @@ export class LichessBot {
         }
 
         let rawMove;
+
         try {
             rawMove = await engine.go(goOpts);
         } catch (err) {
             console.warn(`[${gameId}] go command failed: ${err.message}`);
             return false;
         }
+
         const bestMove = normalizeMove(rawMove);
         console.log(`[${gameId}] Engine: ${bestMove} (${allocLabel})`);
 
@@ -621,20 +683,40 @@ export class LichessBot {
 
     // Returns true if Lichess accepted the move, false otherwise. Caller
     // decides what to do with repeated failures (typically: resign).
-    async sendMove(gameId, move) {
-        const res = await fetch(`https://lichess.org/api/bot/game/${gameId}/move/${move}`, {
-            method: "POST",
-            headers: this.authHeader,
-        });
-        if (!res.ok) {
-            console.warn(`[${gameId}] Move rejected (${move}): ${await res.text()}`);
-            return false;
+    async sendMove(gameId, move, retries = 2) {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const res = await this._lichessFetch(`https://lichess.org/api/bot/game/${gameId}/move/${move}`, {
+                    method: "POST",
+                    headers: this.authHeader,
+                    timeoutMs: 5000,
+                });
+                if (!res.ok) {
+                    const text = await res.text();
+                    console.warn(`[${gameId}] Move rejected (${move}): HTTP ${res.status} ${text}`);
+                    if (res.status >= 500) {
+                        if (attempt < retries) {
+                            await new Promise(r => setTimeout(r, 1000));
+                            continue;
+                        }
+                    }
+                    return false;
+                }
+                return true;
+            } catch (err) {
+                console.warn(`[${gameId}] Move API failed (${move}): ${err.message} (attempt ${attempt + 1}/${retries + 1})`);
+                if (attempt < retries) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    continue;
+                }
+                return false;
+            }
         }
-        return true;
+        return false;
     }
 
     async resignGame(gameId) {
-        await fetch(`https://lichess.org/api/bot/game/${gameId}/resign`, {
+        await this._lichessFetch(`https://lichess.org/api/bot/game/${gameId}/resign`, {
             method: "POST",
             headers: this.authHeader,
         }).catch(() => {});
@@ -721,13 +803,14 @@ export class LichessBot {
     }
 
     async createChallenge(username, limit, increment, rated = true) {
+        await this._throttleGlobalChallenge();
         console.log(`Challenging ${username} (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
         const body = new URLSearchParams({
             "clock.limit": limit,
             "clock.increment": increment,
             rated: rated ? "true" : "false",
         });
-        const res = await fetch(`https://lichess.org/api/challenge/${username}`, {
+        const res = await this._lichessFetch(`https://lichess.org/api/challenge/${username}`, {
             method: "POST",
             headers: this.formHeaders,
             body,
@@ -737,13 +820,14 @@ export class LichessBot {
     }
 
     async createOpenChallenge(limit, increment, rated = true) {
+        await this._throttleGlobalChallenge();
         console.log(`Creating open challenge (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
         const body = new URLSearchParams({
             "clock.limit": limit,
             "clock.increment": increment,
             rated: rated ? "true" : "false",
         });
-        const res = await fetch("https://lichess.org/api/challenge/open", {
+        const res = await this._lichessFetch("https://lichess.org/api/challenge/open", {
             method: "POST",
             headers: this.formHeaders,
             body,
@@ -753,13 +837,14 @@ export class LichessBot {
     }
 
     async createAiChallenge(level, limit, increment) {
+        await this._throttleGlobalChallenge();
         console.log(`Challenging Stockfish level ${level}...`);
         const body = new URLSearchParams({
             level,
             "clock.limit": limit,
             "clock.increment": increment,
         });
-        const res = await fetch("https://lichess.org/api/challenge/ai", {
+        const res = await this._lichessFetch("https://lichess.org/api/challenge/ai", {
             method: "POST",
             headers: this.formHeaders,
             body,
@@ -769,14 +854,15 @@ export class LichessBot {
     }
 
     async cancelChallenge(challengeId) {
-        await fetch(`https://lichess.org/api/challenge/${challengeId}/cancel`, {
+        await this._throttleGlobalChallenge();
+        await this._lichessFetch(`https://lichess.org/api/challenge/${challengeId}/cancel`, {
             method: "POST",
             headers: this.authHeader,
         }).catch(() => {});
     }
 
     _pruneDeclined() {
-        const now = Date.now();
+        const now = this._now();
         for (const [name, expiresAt] of this.recentlyDeclined) {
             if (expiresAt <= now) this.recentlyDeclined.delete(name);
         }
@@ -784,37 +870,36 @@ export class LichessBot {
 
     _inDeclineCooldown(username) {
         const expiresAt = this.recentlyDeclined.get(username.toLowerCase());
-        return expiresAt != null && expiresAt > Date.now();
+        return expiresAt != null && expiresAt > this._now();
     }
 
     _markDeclined(username) {
-        this.recentlyDeclined.set(username.toLowerCase(), Date.now() + this.declineCooldownMs);
+        this.recentlyDeclined.set(username.toLowerCase(), this._now() + this.declineCooldownMs);
     }
 
     _isRateLimited() {
-        return this.rateLimitedUntil > Date.now();
+        return this.rateLimitedUntil > this._now();
     }
 
     _rateLimitRemainingSec() {
-        const ms = this.rateLimitedUntil - Date.now();
+        const ms = this.rateLimitedUntil - this._now();
         return ms > 0 ? Math.ceil(ms / 1000) : 0;
     }
 
     _setRateLimit(retryAfterSec) {
-        // Apply an exponential multiplier based on how many consecutive 429s
-        // we've taken. Lichess's Retry-After tends to be optimistic on bot
-        // challenge endpoints — they'll often 429 us again right after it
-        // expires. Doubling each hit (1x, 2x, 4x, 8x, 16x capped) makes us
-        // bail out gracefully instead of thrashing every minute for hours.
+        // Apply an exponential multiplier based on how many consecutive 429s we've taken.
         this.rateLimitConsecutiveHits++;
         const exp = Math.min(this.rateLimitConsecutiveHits - 1, 10);
-        const mult = Math.min(Math.pow(2, exp), this.rateLimitMaxMultiplier);
-        const totalSec = Math.ceil(retryAfterSec * mult);
-        const candidate = Date.now() + totalSec * 1000;
+        const multiplier = Math.min(Math.pow(2, exp), this.rateLimitMaxMultiplier);
+        const totalSec = Math.ceil(retryAfterSec * multiplier);
+        const candidate = this._now() + totalSec * 1000;
+
         if (candidate > this.rateLimitedUntil) this.rateLimitedUntil = candidate;
-        if (mult > 1) {
-            console.warn(`[Hunt] Consecutive 429 #${this.rateLimitConsecutiveHits}; backing off ${totalSec}s (${mult}× Retry-After)`);
+
+        if (multiplier > 1) {
+            console.warn(`[Hunt] Consecutive 429 #${this.rateLimitConsecutiveHits}; backing off ${totalSec}s (${multiplier}× Retry-After)`);
         }
+
         this._saveRateLimitState().catch(() => {});
     }
 
@@ -822,6 +907,7 @@ export class LichessBot {
         // A successful challenge POST proves our rate-limit credit is restored.
         if (this.rateLimitConsecutiveHits > 0) {
             console.log(`[Hunt] Rate-limit recovered after ${this.rateLimitConsecutiveHits} consecutive hit(s).`);
+            this.notifier.info("[Autoplay] Autoplay restarted after rate limit", {hits: this.rateLimitConsecutiveHits});
             this.rateLimitConsecutiveHits = 0;
             this._saveRateLimitState().catch(() => {});
         }
@@ -838,25 +924,19 @@ export class LichessBot {
         });
         let cRes;
         try {
-            cRes = await fetch(`https://lichess.org/api/challenge/${target.username}`, {
+            cRes = await this._lichessFetch(`https://lichess.org/api/challenge/${target.username}`, {
                 method: "POST",
                 headers: this.formHeaders,
                 body,
             });
         } catch (err) {
+            if (err instanceof LichessRateLimited) throw err;
             console.warn(`[Hunt] Challenge to ${target.username} threw: ${err?.message}`);
             this._markDeclined(target.username);
             return null;
         }
 
-        if (cRes.status === 429) {
-            const retryAfter = parseInt(cRes.headers?.get?.("Retry-After") ?? "", 10);
-            const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
-            this._setRateLimit(seconds);
-            console.warn(`[Hunt] Lichess rate limit hit (Retry-After=${seconds}s, hits=${this.rateLimitConsecutiveHits})`);
-            // Throw with the effective (multiplied) wait so autoplay sleeps long enough.
-            throw new LichessRateLimited(this._rateLimitRemainingSec() || seconds);
-        }
+
         if (!cRes.ok) {
             // Defensive: some mocks (and edge-case responses) omit text(). Don't
             // let a missing method cause us to skip the _markDeclined() call.
@@ -880,7 +960,6 @@ export class LichessBot {
     async _raceChallenges(candidates, limit, increment, rated) {
         const challengedCandidates = [];
         let winner = null;
-        let lastChallengeTime = 0;
 
         try {
             for (const target of candidates) {
@@ -888,16 +967,9 @@ export class LichessBot {
                     throw new LichessRateLimited(this._rateLimitRemainingSec());
                 }
 
-                // Stagger between consecutive challenges.
-                const now = Date.now();
-                const elapsedSinceLast = now - lastChallengeTime;
-                if (lastChallengeTime > 0 && elapsedSinceLast < this.challengeSpacingMs) {
-                    await new Promise(r => setTimeout(r, this.challengeSpacingMs - elapsedSinceLast));
-                }
-
                 let acceptedChallenge = null;
                 try {
-                    lastChallengeTime = Date.now();
+                    await this._throttleGlobalChallenge();
                     acceptedChallenge = await this._postOneChallenge(target, limit, increment, rated);
                 } catch (err) {
                     if (err instanceof LichessRateLimited) {
@@ -914,9 +986,9 @@ export class LichessBot {
                 challengedCandidates.push(acceptedChallenge);
 
                 // Wait up to huntAcceptTimeoutMs for this specific challenge to be accepted
-                const deadline = Date.now() + this.huntAcceptTimeoutMs;
+                const deadline = this._now() + this.huntAcceptTimeoutMs;
                 let accepted = false;
-                while (Date.now() < deadline) {
+                while (this._now() < deadline) {
                     await new Promise(r => setTimeout(r, this.huntPollIntervalMs));
                     if (this.activeGames.has(acceptedChallenge.id)) {
                         accepted = true;
@@ -959,9 +1031,12 @@ export class LichessBot {
     }
 
     async _fetchMyRating(perf) {
-        const res = await fetch("https://lichess.org/api/account", {headers: this.authHeader});
-        if (!res.ok) throw new Error("Failed to fetch own profile");
-        const profile = await res.json();
+        if (!this._profileCache || this._now() - this._profileCache.time > 60000) {
+            const res = await this._lichessFetch("https://lichess.org/api/account", {headers: this.authHeader});
+            if (!res.ok) throw new Error("Failed to fetch own profile");
+            this._profileCache = { data: await res.json(), time: this._now() };
+        }
+        const profile = this._profileCache.data;
         const rating = profile.perfs?.[perf]?.rating;
         if (rating == null) throw new Error(`No ${perf} rating on profile yet`);
         return {rating, prov: !!profile.perfs[perf].prov};
@@ -970,7 +1045,7 @@ export class LichessBot {
     // Challenge bots within ±window of our own rating for the given TC. Tries
     // up to `maxAttempts` candidates, ordered by closeness in rating; returns
     // the first one that accepts within ~5s.
-    async huntNearRating(limit, increment, rated = true, {window = 200, maxAttempts = 8, poolSize = 80, maxWindow = 2000} = {}) {
+    async huntNearRating(limit, increment, rated = true, {window = 200, maxAttempts = 1, poolSize = 80, maxWindow = 2000} = {}) {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
         }
@@ -978,13 +1053,7 @@ export class LichessBot {
         const {rating: myRating, prov} = await this._fetchMyRating(perf);
         console.log(`[Hunt] My ${perf} rating: ${myRating}${prov ? " (provisional)" : ""}; window ±${window} (max ±${maxWindow})`);
 
-        const res = await fetch("https://lichess.org/api/bot/online?nb=500", {
-            headers: {Accept: "application/x-ndjson"},
-        });
-        if (!res.ok) throw new Error("Failed to fetch online bots");
-
-        const bots = [];
-        await this.readNdjsonStream(res.body, null, (bot) => { bots.push(bot); });
+        const bots = await this._fetchOnlineBots(500);
 
         this._pruneDeclined();
 
@@ -1059,13 +1128,7 @@ export class LichessBot {
         }
         console.log(`Hunting weakest bot (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
 
-        const res = await fetch("https://lichess.org/api/bot/online?nb=200", {
-            headers: {Accept: "application/x-ndjson"},
-        });
-        if (!res.ok) throw new Error("Failed to fetch online bots");
-
-        const bots = [];
-        await this.readNdjsonStream(res.body, null, (bot) => { bots.push(bot); });
+        const bots = await this._fetchOnlineBots(500);
 
         this._pruneDeclined();
 
@@ -1077,7 +1140,7 @@ export class LichessBot {
         const candidates = eligible
             .filter(b => !this._inDeclineCooldown(b.username))
             .sort((a, b) => a.perfs.blitz.rating - b.perfs.blitz.rating)
-            .slice(0, 10);
+            .slice(0, 2);
 
         if (filteredOut > 0) {
             console.log(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down`);
@@ -1092,6 +1155,69 @@ export class LichessBot {
         }
 
         throw new Error("Hunt failed — all candidates ignored our challenges.");
+    }
+
+    async _throttleGlobalChallenge() {
+        const now = this._now();
+        const elapsedSinceLast = now - this.lastChallengeTime;
+        if (this.lastChallengeTime > 0 && elapsedSinceLast < this.challengeSpacingMs) {
+            await new Promise(r => setTimeout(r, this.challengeSpacingMs - elapsedSinceLast));
+        }
+        this.lastChallengeTime = this._now();
+    }
+
+    async _lichessFetch(url, options = {}) {
+        if (this._isRateLimited()) {
+            throw new LichessRateLimited(this._rateLimitRemainingSec());
+        }
+
+        const now = this._now();
+        const elapsed = now - (this.lastApiTime || 0);
+        if (this.lastApiTime && elapsed < this.apiSpacingMs) {
+            await new Promise(r => setTimeout(r, this.apiSpacingMs - elapsed));
+        }
+        this.lastApiTime = this._now();
+
+        // Add a 15-second timeout to prevent indefinite hangs if Cloudflare/Lichess drops packets
+        const timeoutMs = options.timeoutMs ?? 15000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(new Error("Lichess timeout")), timeoutMs);
+        
+        // Merge with existing signal if any
+        if (options.signal) {
+            options.signal.addEventListener("abort", () => controller.abort(options.signal.reason), {once: true});
+        }
+
+        let res;
+        try {
+            res = await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        if (res.status === 429) {
+            let body = "";
+            try { body = await res.text(); } catch (e) {}
+            console.error(`[Lichess API] 429 Rate Limited. Response body: ${body}`);
+            const retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
+            const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
+            this._setRateLimit(seconds);
+            throw new LichessRateLimited(this._rateLimitRemainingSec() || seconds);
+        }
+        return res;
+    }
+
+    async _fetchOnlineBots(nb) {
+        if (!this._onlineBotsCache || this._now() - this._onlineBotsCache.time > 30000) {
+            const res = await this._lichessFetch(`https://lichess.org/api/bot/online?nb=${nb}`, {
+                headers: {Accept: "application/x-ndjson"},
+            });
+            if (!res.ok) throw new Error("Failed to fetch online bots");
+            const bots = [];
+            await this.readNdjsonStream(res.body, null, (bot) => { bots.push(bot); });
+            this._onlineBotsCache = { data: bots, time: this._now() };
+        }
+        return this._onlineBotsCache.data;
     }
 
     async readNdjsonStream(readableStream, signal, callback) {

@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bun test *)"
+      "Bash(bun test *)",
       "Bash(cmake --build build --config Release)",
       "Read(//c/Users/Yaakov Davidovici/scoop/shims/**)",
       "Read(//c/msys64/usr/bin/**)",
@@ -9,7 +9,8 @@
       "Bash(bash scripts/test.sh)",
       "Read(//mingw64/bin/**)",
       "Read(//usr/local/bin/**)",
-      "Bash('/c/Users/Yaakov Davidovici/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin/cmake.exe' -S . -B build -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=RelWithDebInfo)"
+      "Bash('/c/Users/Yaakov Davidovici/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin/cmake.exe' -S . -B build -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=RelWithDebInfo)",
+      "PowerShell(claude doctor *)"
     ]
   }
 }

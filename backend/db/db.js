@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { players, games, gameMoves } from "./schema.js";
+import { players, games, gameMoves, moveEvals } from "./schema.js";
 import path from "node:path";
 
 const __dirname = import.meta.dirname;
@@ -14,5 +14,6 @@ export const db = drizzle(sqlite, {
     players,
     games,
     gameMoves,
+    moveEvals,
   },
 });

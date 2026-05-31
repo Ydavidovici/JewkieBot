@@ -33,3 +33,11 @@ engines/stockfish
 /engines/stash/
 /engines/ethereal/
 /tools/
+
+# Ignore large opening books
+engines/myengine/*.bin
+engines/myengine/*.7z
+
+# Frontend build artifacts
+frontend/dist/
+frontend/node_modules/
