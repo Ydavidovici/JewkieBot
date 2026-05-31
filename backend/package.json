@@ -26,6 +26,7 @@
         "cors": "^2.8.6",
         "discord.js": "^14.26.4",
         "drizzle-orm": "^0.44.7",
-        "express": "^5.1.0"
+        "express": "^5.1.0",
+        "postgres": "^3.4.9"
     }
 }
