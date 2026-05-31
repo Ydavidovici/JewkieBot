@@ -1,6 +1,4 @@
-import {eq} from "drizzle-orm";
-import {db} from "../db/db.js";
-import {players, games, gameMoves} from "../db/schema.js";
+import {dbClient} from "./dbClient.js";
 import {nullNotifier} from "./notifier.js";
 import {OPENINGS} from "./openings.js";
 
@@ -707,49 +705,29 @@ export class LichessBot {
         }).catch(() => {});
     }
 
-    async upsertPlayer(username) {
-        await db.insert(players).values({name: username}).onConflictDoNothing();
-        const [row] = await db.select({id: players.id})
-            .from(players)
-            .where(eq(players.name, username));
-        return row.id;
-    }
-
     async createDbGame(lichessGameId, {whiteUsername, blackUsername, variant, rated, timeControl, whiteRating, blackRating}) {
-        // Resume path: if a row for this lichessGameId exists (e.g. backend
-        // restarted mid-game), reuse it instead of trying to re-insert.
-        const existing = await db.select({id: games.id})
-            .from(games)
-            .where(eq(games.lichessGameId, lichessGameId))
-            .limit(1);
-        if (existing[0]) {
-            this.dbGameIds.set(lichessGameId, existing[0].id);
-            const moves = await db.select({id: gameMoves.id})
-                .from(gameMoves)
-                .where(eq(gameMoves.gameId, existing[0].id));
+        try {
+            const game = await dbClient.createGame({
+                lichessGameId,
+                whiteUsername,
+                blackUsername,
+                variant,
+                rated,
+                timeControl,
+                whiteRating,
+                blackRating,
+                env: process.env.APP_ENV || "prod",
+                source: "lichess"
+            });
+            
+            this.dbGameIds.set(lichessGameId, game.id);
+
+            // Fetch any existing moves if resuming
+            const moves = await dbClient.getGameMoves(game.id);
             this.savedPlies.set(lichessGameId, moves.length);
-            return;
+        } catch (error) {
+            console.error(`[${lichessGameId}] Failed to create/resume DB game:`, error.message);
         }
-
-        const [whitePlayerId, blackPlayerId] = await Promise.all([
-            this.upsertPlayer(whiteUsername),
-            this.upsertPlayer(blackUsername),
-        ]);
-
-        const [row] = await db.insert(games).values({
-            whiteId: whitePlayerId,
-            blackId: blackPlayerId,
-            source: "lichess",
-            lichessGameId,
-            variant,
-            rated,
-            timeControl,
-            whiteRating,
-            blackRating,
-        }).returning({id: games.id});
-
-        this.dbGameIds.set(lichessGameId, row.id);
-        this.savedPlies.set(lichessGameId, 0);
     }
 
     async saveNewMoves(lichessGameId, movesStr) {
@@ -761,27 +739,30 @@ export class LichessBot {
         const newMoves = allMoves.slice(savedPly);
         if (newMoves.length === 0) return;
 
-        await db.insert(gameMoves).values(
-            newMoves.map((uci, i) => ({
-                gameId: dbGameId,
+        try {
+            await dbClient.insertGameMoves(dbGameId, newMoves.map((uci, i) => ({
                 ply: savedPly + i + 1,
                 uci,
-            }))
-        );
-        this.savedPlies.set(lichessGameId, allMoves.length);
+            })));
+            this.savedPlies.set(lichessGameId, allMoves.length);
+        } catch (error) {
+            console.error(`[${lichessGameId}] Failed to save moves:`, error.message);
+        }
     }
 
     async finalizeDbGame(lichessGameId, status, winner) {
         const dbGameId = this.dbGameIds.get(lichessGameId);
         if (dbGameId == null) return;
 
-        await db.update(games)
-            .set({
+        try {
+            await dbClient.updateGame(dbGameId, {
                 result: mapResult(status, winner),
                 termination: status,
-                finishedAt: new Date().toISOString(),
-            })
-            .where(eq(games.id, dbGameId));
+                finished_at: new Date().toISOString(),
+            });
+        } catch (error) {
+            console.error(`[${lichessGameId}] Failed to finalize DB game:`, error.message);
+        }
 
         this.dbGameIds.delete(lichessGameId);
         this.savedPlies.delete(lichessGameId);
