@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const url = "https://zipproth.de/Brainfish/Cerebellum_Light_3Merge_200916.7z";
-const enginesDir = path.resolve(__dirname, "../../../engines/myengine");
+const enginesDir = path.resolve(__dirname, "../../../engines/jewkiebot");
 const archivePath = path.join(enginesDir, "cerebellum.7z");
 const finalBookPath = path.join(enginesDir, "book.bin");
 

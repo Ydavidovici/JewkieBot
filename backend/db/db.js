@@ -5,9 +5,9 @@ import path from "node:path";
 
 const __dirname = import.meta.dirname;
 
-// Resolve to backend/myengine.db (one level up from this file) so the DB
+// Resolve to backend/jewkiebot.db (one level up from this file) so the DB
 // location is independent of where bun was launched from.
-const sqlite = new Database(path.join(__dirname, "..", "myengine.db"), { create: true });
+const sqlite = new Database(path.join(__dirname, "..", "jewkiebot.db"), { create: true });
 
 export const db = drizzle(sqlite, {
   schema: {

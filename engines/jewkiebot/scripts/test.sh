@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage:
 #   scripts/test.sh
-#   scripts/test.sh tests/myengine/board-move-test.cpp
+#   scripts/test.sh tests/jewkiebot/board-move-test.cpp
 #   scripts/test.sh board_move_tests
 #   scripts/test.sh '^engine_.*moves$'
 

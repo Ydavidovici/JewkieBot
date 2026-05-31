@@ -112,12 +112,12 @@ beforeEach(async () => {
     tokenValue = "test_token";
 
     manager = new MockEngineManager();
-    await manager.registerEngine("Main", "/fake/path/myengine");
+    await manager.registerEngine("Main", "/fake/path/jewkiebot");
 
     const { app } = createApp({
         manager,
         lichessEngineFactory: () => { factoryCalls++; return new MockUciEngine(); },
-        mainEnginePath: "/fake/path/myengine",
+        mainEnginePath: "/fake/path/jewkiebot",
         maxConcurrentGames: 4,
         getToken: () => tokenValue,
         BotClass: MockLichessBot,
@@ -258,7 +258,7 @@ describe("POST /api/engine/cancel", () => {
         const res = await POST("/api/engine/cancel");
         expect(res.status).toBe(200);
         expect(manager.shutdownEngineCalls).toContain("Main");
-        expect(manager.registerEngineCalls.some(c => c.id === "Main" && c.path === "/fake/path/myengine")).toBe(true);
+        expect(manager.registerEngineCalls.some(c => c.id === "Main" && c.path === "/fake/path/jewkiebot")).toBe(true);
     });
 
     it("returns 500 when re-registration fails", async () => {

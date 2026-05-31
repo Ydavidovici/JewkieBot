@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(__dirname, "..", "myengine.db"));
+const db = new Database(path.join(__dirname, "..", "jewkiebot.db"));
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS move_evals (

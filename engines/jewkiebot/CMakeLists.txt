@@ -38,9 +38,9 @@ target_link_libraries(book PUBLIC board move)
 target_link_libraries(core_engine PUBLIC board move evaluator transposition_table search book)
 target_link_libraries(bench PUBLIC core_engine)
 
-add_executable(myengine src/main.cpp)
-target_include_directories(myengine PRIVATE ${ENGINE_INCLUDE_DIR})
-target_link_libraries(myengine PRIVATE core_engine bench)
+add_executable(jewkiebot src/main.cpp)
+target_include_directories(jewkiebot PRIVATE ${ENGINE_INCLUDE_DIR})
+target_link_libraries(jewkiebot PRIVATE core_engine bench)
 
 enable_testing()
 

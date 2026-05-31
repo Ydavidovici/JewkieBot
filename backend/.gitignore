@@ -22,6 +22,6 @@ builds
 storage
 
 # Engine binary copied here by `bun run build:engine --prod`
-src/myengine
-src/myengine.exe
+src/jewkiebot
+src/jewkiebot.exe
 lichess-rate-limit.json

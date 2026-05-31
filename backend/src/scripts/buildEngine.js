@@ -1,6 +1,6 @@
 // Build the C++ engine into the location the backend expects.
 //
-//   bun run build:engine            -> Release build at engines/myengine/build/<exe>
+//   bun run build:engine            -> Release build at engines/jewkiebot/build/<exe>
 //   bun run build:engine --debug    -> Debug build
 //   bun run build:engine --prod     -> also copy the binary to backend/src/<exe>
 //                                      (the path server.js auto-detects in prod mode)
@@ -14,9 +14,9 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENGINE_ROOT = path.resolve(__dirname, "../../../engines/myengine");
+const ENGINE_ROOT = path.resolve(__dirname, "../../../engines/jewkiebot");
 const BUILD_DIR = path.join(ENGINE_ROOT, "build");
-const EXE = process.platform === "win32" ? "myengine.exe" : "myengine";
+const EXE = process.platform === "win32" ? "jewkiebot.exe" : "jewkiebot";
 const BUILT_BINARY = path.join(BUILD_DIR, EXE);
 const PROD_DEST = path.resolve(__dirname, "..", EXE); // backend/src/<exe>
 
@@ -53,7 +53,7 @@ async function main() {
     }
 
     await run(cmakeArgs);
-    await run(["cmake", "--build", BUILD_DIR, "--target", "myengine", "-j", jobs]);
+    await run(["cmake", "--build", BUILD_DIR, "--target", "jewkiebot", "-j", jobs]);
 
     if (!(await Bun.file(BUILT_BINARY).exists())) {
         throw new Error(`Build succeeded but binary missing at ${BUILT_BINARY}`);

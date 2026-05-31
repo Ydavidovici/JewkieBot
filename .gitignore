@@ -35,8 +35,8 @@ engines/stockfish
 /tools/
 
 # Ignore large opening books
-engines/myengine/*.bin
-engines/myengine/*.7z
+engines/jewkiebot/*.bin
+engines/jewkiebot/*.7z
 
 # Frontend build artifacts
 frontend/dist/

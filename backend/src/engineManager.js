@@ -6,7 +6,7 @@ import {nullNotifier} from "./notifier.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ENGINE_PATH = path.join(__dirname, "..", "..", "engines", "myengine", "build", "myengine");
+const ENGINE_PATH = path.join(__dirname, "..", "..", "engines", "jewkiebot", "build", "jewkiebot");
 
 export class EngineCapReached extends Error {
     constructor(cap, current) {

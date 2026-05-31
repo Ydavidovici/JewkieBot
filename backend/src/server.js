@@ -295,36 +295,36 @@ export function createApp({
 }
 
 if (import.meta.main) {
-    const PROD_PATH = path.join(import.meta.dir, "myengine");
-    const DEV_PATH = path.resolve(import.meta.dir, "../../engines/myengine/build/myengine.exe");
-    const FIX_DEV_PATH = path.resolve(import.meta.dir, "../../../engines/myengine/build/myengine");
+    const PROD_PATH = path.join(import.meta.dir, "jewkiebot");
+    const DEV_PATH = path.resolve(import.meta.dir, "../../engines/jewkiebot/build/jewkiebot.exe");
+    const FIX_DEV_PATH = path.resolve(import.meta.dir, "../../../engines/jewkiebot/build/jewkiebot");
 
-    let MY_ENGINE_PATH = null;
+    let JEWKIEBOT_PATH = null;
 
     if (process.env.ENGINE_PATH) {
         if (await Bun.file(process.env.ENGINE_PATH).exists()) {
             console.log("✅ Using ENGINE_PATH from environment");
-            MY_ENGINE_PATH = process.env.ENGINE_PATH;
+            JEWKIEBOT_PATH = process.env.ENGINE_PATH;
         } else {
             console.error(`❌ CRITICAL: ENGINE_PATH set but not found: ${process.env.ENGINE_PATH}`);
             process.exit(1);
         }
     } else if (await Bun.file(PROD_PATH).exists()) {
         console.log("✅ Running in Production Mode (Local Binary)");
-        MY_ENGINE_PATH = PROD_PATH;
+        JEWKIEBOT_PATH = PROD_PATH;
     } else if (await Bun.file(DEV_PATH).exists()) {
         console.log("⚠️  Running in Dev Mode (External Binary)");
-        MY_ENGINE_PATH = DEV_PATH;
+        JEWKIEBOT_PATH = DEV_PATH;
     } else if (await Bun.file(FIX_DEV_PATH).exists()) {
         console.log("⚠️  Running in Dev Mode (Deep Nested Fallback)");
-        MY_ENGINE_PATH = FIX_DEV_PATH;
+        JEWKIEBOT_PATH = FIX_DEV_PATH;
     }
 
-    if (!MY_ENGINE_PATH) {
+    if (!JEWKIEBOT_PATH) {
         console.error("❌ CRITICAL: Could not find chess engine binary!");
         process.exit(1);
     }
-    console.log(`♟️  Engine Path: ${MY_ENGINE_PATH}`);
+    console.log(`♟️  Engine Path: ${JEWKIEBOT_PATH}`);
 
     const transports = [];
     const apiTransport = new ApiTransport();
@@ -344,10 +344,10 @@ if (import.meta.main) {
         maxEngines: ENGINE_HARD_CAP,
         notifier,
         engineOptions: {
-            bookPath: path.resolve(__dirname, "../../engines/myengine/book.bin")
+            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin")
         }
     });
-    await manager.registerEngine("Main", MY_ENGINE_PATH);
+    await manager.registerEngine("Main", JEWKIEBOT_PATH);
 
     const lichessEngineFactory = () => {
         // The reservation check is what enforces the cap. Existing engines are untouched.
@@ -355,10 +355,10 @@ if (import.meta.main) {
         if (!manager.hasCapacity()) {
             throw new EngineCapReached(manager.maxEngines, manager.count());
         }
-        return new UciEngine(MY_ENGINE_PATH, {
+        return new UciEngine(JEWKIEBOT_PATH, {
             notifier,
             label,
-            bookPath: path.resolve(__dirname, "../../engines/myengine/book.bin")
+            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin")
         });
     };
 

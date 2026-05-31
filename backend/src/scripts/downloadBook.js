@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const defaultTargetPath = path.resolve(__dirname, "../../../engines/myengine/book.bin");
+const defaultTargetPath = path.resolve(__dirname, "../../../engines/jewkiebot/book.bin");
 const targetPath = process.env.BOOK_OUT_PATH ? path.resolve(process.env.BOOK_OUT_PATH) : defaultTargetPath;
 
 async function downloadBook() {

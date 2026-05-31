@@ -4,10 +4,10 @@ import {join, resolve} from "path";
 import {cpus} from "os";
 import packageJson from "../../package.json";
 
-const ENGINE_SOURCE = resolve("../../engines/myengine");
+const ENGINE_SOURCE = resolve("../../engines/jewkiebot");
 const BUILD_ROOT = resolve("./builds");
 const BACKEND_ENTRY = "../../server.js";
-const EXECUTABLE_NAME = "myengine";
+const EXECUTABLE_NAME = "jewkiebot";
 
 async function run(cmd, cwd) {
     console.log(`> ${cmd.join(" ")}`);

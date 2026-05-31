@@ -12,14 +12,14 @@ const ENGINES_DIR = path.join(__dirname, "../../../engines");
 
 const CUTECHESS = path.join(TOOLS_DIR, "cutechess-1.4.0-win64/cutechess-cli.exe");
 const BOOK_PATH = path.join(TOOLS_DIR, "UHO_4060_v1.epd");
-const MY_ENGINE = path.join(ENGINES_DIR, "myengine/build/myengine.exe");
+const MY_ENGINE = path.join(ENGINES_DIR, "jewkiebot/build/jewkiebot.exe");
 const STOCKFISH_PATH = path.join(ENGINES_DIR, "stockfish/stockfish/stockfish-windows-x86-64-avx2.exe");
 const STORAGE_DIR = path.join(__dirname, "../storage");
 
 function cleanupEngines() {
     console.log("\n🧹 Sweeping up orphaned engine processes...");
     try {
-        execSync("taskkill /F /IM myengine.exe /T", { stdio: "ignore" });
+        execSync("taskkill /F /IM jewkiebot.exe /T", { stdio: "ignore" });
         execSync("taskkill /F /IM cutechess-cli.exe /T", { stdio: "ignore" });
         execSync("taskkill /F /IM stockfish-windows-x86-64-avx2.exe /T", { stdio: "ignore" });
         console.log("✅ Cleanup complete.");
@@ -43,7 +43,7 @@ async function runTournament() {
     const args = [
         "-tournament", "gauntlet",
 
-        "-engine", "name=MyEngine", `cmd=${MY_ENGINE}`, "proto=uci",
+        "-engine", "name=JewkieBot", `cmd=${MY_ENGINE}`, "proto=uci",
 
         "-engine",
         "name=SF_Weak_d4",

@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: engines/myengine
+        working-directory: engines/jewkiebot
 
     steps:
       - uses: actions/checkout@v4
@@ -29,15 +29,15 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --target myengine -j4
+        run: cmake --build build --target jewkiebot -j4
 
       - name: Stage artifact
         shell: pwsh
         run: |
-          $artifact = "myengine-${{ github.ref_name }}-windows-x64.exe"
-          Copy-Item build\myengine.exe $artifact
+          $artifact = "jewkiebot-${{ github.ref_name }}-windows-x64.exe"
+          Copy-Item build\jewkiebot.exe $artifact
           echo "ARTIFACT=$artifact" >> $env:GITHUB_ENV
-          echo "ARTIFACT_PATH=engines/myengine/$artifact" >> $env:GITHUB_ENV
+          echo "ARTIFACT_PATH=engines/jewkiebot/$artifact" >> $env:GITHUB_ENV
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

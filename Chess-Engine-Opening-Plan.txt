@@ -6,10 +6,10 @@ We will add the ability to force the engine to play specific styles (Positional,
 Step 1: Setting up the Opening Books
 ------------------------------------
 1. Find your Polyglot opening book (.bin file) on your home PC.
-2. Copy the .bin file into your engine's build directory (e.g., `Chess-Engine/engines/myengine/build/books/`).
+2. Copy the .bin file into your engine's build directory (e.g., `Chess-Engine/engines/jewkiebot/build/books/`).
 3. You can either rename it to `balanced.bin`, `tactical.bin`, etc., or keep its name and update the engine code below to point to its exact filename.
 
-Step 2: Engine Changes (engines/myengine/src/main.cpp)
+Step 2: Engine Changes (engines/jewkiebot/src/main.cpp)
 -------------------------------------------------------
 1. In `handle_uci`, expose a new UCI Option for OpeningStyle:
    std::cout << "option name OpeningStyle type combo default Balanced var Balanced var Positional var Tactical\n";
