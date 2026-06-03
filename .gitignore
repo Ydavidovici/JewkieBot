@@ -41,3 +41,9 @@ engines/jewkiebot/*.7z
 # Frontend build artifacts
 frontend/dist/
 frontend/node_modules/
+# Third-party tools and datasets
+/engines/stockfish/
+/tools/cutechess*/
+/tools/*.epd
+/tools/*.zip
+
