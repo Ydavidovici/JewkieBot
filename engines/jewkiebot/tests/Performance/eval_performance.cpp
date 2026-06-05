@@ -7,6 +7,11 @@
 #include <sstream>
 #include <cmath>
 #include <iomanip>
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 struct TuningEntry {
     Board board;
@@ -67,9 +72,24 @@ std::vector<TuningEntry> loadDataset(const std::string& filename) {
 }
 
 int main(int argc, char** argv) {
-    std::string datasetPath = "../../tools/dummy_dataset.epd";
+    std::string datasetPath = "tools/tuning_dataset.epd";
     if (argc > 1) {
         datasetPath = argv[1];
+    } else {
+        std::vector<std::string> fallbacks = {
+            "../../../tools/tuning_dataset.epd",
+            "../../tools/tuning_dataset.epd",
+            "../tools/tuning_dataset.epd",
+            "tools/tuning_dataset.epd",
+            "tuning_dataset.epd"
+        };
+        for (const auto& path : fallbacks) {
+            std::ifstream test(path);
+            if (test.good()) {
+                datasetPath = path;
+                break;
+            }
+        }
     }
 
     std::cout << "Loading dataset from " << datasetPath << "..." << std::endl;
@@ -128,7 +148,50 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "\nOptimization finished. New MSE: " << bestMSE << std::endl;
-    std::cout << "Please inspect Evaluator variables or add a save function to write them to file." << std::endl;
+    
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_t = std::chrono::system_clock::to_time_t(now);
+    std::tm* tm = std::localtime(&now_t);
+
+    std::ostringstream fn;
+    fn << "tuning_results_" << std::put_time(tm, "%Y%m%d_%H%M%S") << ".txt";
+
+    fs::path cur = fs::current_path();
+    std::string cname = cur.filename().string();
+    fs::path outDir = (cname == "build" || cname.find("cmake-build") != std::string::npos)
+                          ? cur.parent_path() / "tests" / "Performance" / "results"
+                          : cur / "tests" / "Performance" / "results";
+
+    fs::create_directories(outDir);
+    fs::path fullPath = outDir / fn.str();
+
+    std::ofstream out(fullPath);
+    if (out.is_open()) {
+        out << "Texel Tuning Results\n";
+        out << "Final MSE: " << bestMSE << "\n\n";
+
+        auto printTable = [&](const std::string& name, int startIdx, int count) {
+            out << name << " = {\n    ";
+            for (int i = 0; i < count; ++i) {
+                out << evaluator.getParameter(startIdx + i) << ", ";
+                if ((i + 1) % 8 == 0) out << "\n    ";
+            }
+            out << "};\n\n";
+        };
+
+        printTable("pieceValues (P, N, B, R, Q, K)", 0, 6);
+        printTable("pawnTable", 6, 64);
+        printTable("knightTable", 70, 64);
+        printTable("bishopTable", 134, 64);
+        printTable("rookTable", 198, 64);
+        printTable("queenTable", 262, 64);
+        printTable("kingTable", 326, 64);
+
+        out.close();
+        std::cout << "Optimized weights successfully saved to: " << fullPath.string() << std::endl;
+    } else {
+        std::cerr << "Failed to save weights to: " << fullPath.string() << std::endl;
+    }
 
     return 0;
 }

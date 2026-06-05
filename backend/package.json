@@ -16,12 +16,14 @@
         "download:book:gm2001": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/gm2001.bin",
         "download:book:titans": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/Titans.bin",
         "download:book:human": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/Human.bin",
-        "download:book:cerebellum": "bun run src/scripts/downloadCerebellum.js"
+        "download:book:cerebellum": "bun run src/scripts/downloadCerebellum.js",
+        "generate-data": "bun run src/scripts/generate_dataset.ts"
     },
     "devDependencies": {
         "@types/bun": "latest"
     },
     "dependencies": {
+        "chess.js": "^1.4.0",
         "cors": "^2.8.6",
         "discord.js": "^14.26.4",
         "express": "^5.1.0"
