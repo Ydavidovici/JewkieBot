@@ -42,10 +42,13 @@ export function computeMoveTime(remainingMs, incMs, totalTimeMs) {
 }
 
 export function mapResult(status, winner) {
-    if (winner === "white") return "1-0";
-    if (winner === "black") return "0-1";
-    const draws = ["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"];
-    if (draws.includes(status)) return "1/2-1/2";
+    if (winner === "white")
+        return "1-0";
+    else
+        return "0-1";
+
+    if (["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"].includes(status)) return "1/2-1/2";
+
     return null;
 }
 
