@@ -43,6 +43,7 @@ export class CutechessManager extends EventEmitter {
         if (nodes) eachArgs.push(`nodes=${nodes}`);
 
         args.push(
+            "-tournament", "gauntlet",
             ...eachArgs,
             "-rounds", rounds.toString(),
             "-games", "2",
