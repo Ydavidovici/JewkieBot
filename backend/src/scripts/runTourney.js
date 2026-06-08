@@ -13,7 +13,9 @@ const TOOLS_DIR = path.join(__dirname, "../../../tools");
 const ENGINES_DIR = path.join(__dirname, "../../../engines");
 const STORAGE_DIR = path.join(__dirname, "../../storage");
 
-const CUTECHESS = path.join(TOOLS_DIR, "cutechess-1.4.0-win64/cutechess-cli.exe");
+const CUTECHESS = process.platform === "win32"
+    ? path.join(TOOLS_DIR, "cutechess-1.4.0-win64/cutechess-cli.exe")
+    : "cutechess-cli";
 const BOOK_PATH = path.join(TOOLS_DIR, "UHO_4060_v1.epd");
 
 const options = {
