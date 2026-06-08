@@ -26,8 +26,7 @@ const options = {
 const { values } = parseArgs({ options, args: process.argv.slice(2) });
 
 const DIVERSE_ENGINES = [
-    { name: "Ethereal", exe: "ethereal/ethereal.exe", depth: 4 },
-    { name: "Stash", exe: "stash/stash.exe", depth: 5 },
+    { name: "Stockfish", exe: "stockfish/stockfish.exe", depth: 4 },
     { name: "Weiss", exe: "weiss/weiss.exe", depth: 4 },
     { name: "Clover", exe: "clover/clover.exe", depth: 4 },
     { name: "Igel", exe: "igel/igel.exe", depth: 3 },
