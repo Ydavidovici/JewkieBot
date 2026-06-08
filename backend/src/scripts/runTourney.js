@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import { parseArgs } from "node:util";
 import * as dotenv from "dotenv";
+import { DbClient } from "../dbClient.js";
+import { PgnGenerator } from "../pgnGenerator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -133,7 +135,16 @@ class TourneyManager extends CutechessManager {
 async function main() {
     const manager = new TourneyManager();
     try {
-        await manager.runGauntletTournament();
+        const pgnOut = await manager.runGauntletTournament();
+        
+        console.log(`\n💾 Tournament complete. Ingesting games into Database...`);
+        const dbClient = new DbClient();
+        const pgnGen = new PgnGenerator(dbClient);
+        const pgnContent = fs.readFileSync(pgnOut, "utf-8");
+        
+        const results = await pgnGen.ingestPgnString(pgnContent);
+        console.log(`✅ Database Ingestion Complete: ${results.success} games saved, ${results.failed} failed.`);
+        
     } catch (e) {
         console.error("\n❌ Fatal Error during tournament:", e);
     }
