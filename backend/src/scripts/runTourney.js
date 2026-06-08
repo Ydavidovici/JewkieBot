@@ -26,13 +26,13 @@ const options = {
 const { values } = parseArgs({ options, args: process.argv.slice(2) });
 
 const DIVERSE_ENGINES = [
-    { name: "Stockfish", exe: "stockfish/stockfish.exe", depth: 4 },
-    { name: "Weiss", exe: "weiss/weiss.exe", depth: 4 },
-    { name: "Clover", exe: "clover/clover.exe", depth: 4 },
-    { name: "Igel", exe: "igel/igel.exe", depth: 3 },
-    { name: "RubiChess", exe: "rubichess/rubichess.exe", depth: 3 },
-    { name: "Berserk", exe: "berserk/berserk.exe", depth: 4 },
-    { name: "Koivisto", exe: "koivisto/koivisto.exe", depth: 3 },
+    { name: "SF-Depth2", exe: "stockfish/stockfish", depth: 2 },
+    { name: "SF-Depth3", exe: "stockfish/stockfish", depth: 3 },
+    { name: "SF-Depth4", exe: "stockfish/stockfish", depth: 4 },
+    { name: "SF-Depth5", exe: "stockfish/stockfish", depth: 5 },
+    { name: "SF-Depth6", exe: "stockfish/stockfish", depth: 6 },
+    { name: "SF-Depth7", exe: "stockfish/stockfish", depth: 7 },
+    { name: "SF-Depth8", exe: "stockfish/stockfish", depth: 8 },
 ];
 
 class TourneyManager extends CutechessManager {
