@@ -5,16 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINES_DIR = path.join(__dirname, "..", "..", "..", "engines");
-
 const isWin = process.platform === "win32";
 const ENGINES = [
-    { repo: "AndyGrant/Ethereal", name: "ethereal", match: isWin ? "windows" : "ubuntu" },
-    { repo: "official-stockfish/Stockfish", name: "stash", match: isWin ? "windows" : "ubuntu" },
+    { repo: "official-stockfish/Stockfish", name: "stockfish", match: isWin ? "windows" : "ubuntu" },
     { repo: "TerjeKir/weiss", name: "weiss", match: isWin ? "windows" : "linux" },
-    { repo: "lucametehau/CloverEngine", name: "clover", match: isWin ? "windows" : "ubuntu" },
-    { repo: "vshcherbyna/igel", name: "igel", match: isWin ? "windows" : "ubuntu" },
+    { repo: "lucametehau/CloverEngine", name: "clover", match: isWin ? "windows" : "linux" },
+    { repo: "vshcherbyna/igel", name: "igel", match: isWin ? "windows" : "linux" },
     { repo: "Matthies/RubiChess", name: "rubichess", match: isWin ? "windows" : "linux" },
-    { repo: "jhonnold/berserk", name: "berserk", match: isWin ? "windows" : "ubuntu" },
+    { repo: "jhonnold/berserk", name: "berserk", match: isWin ? "windows" : "linux" },
     { repo: "Luecx/Koivisto", name: "koivisto", match: isWin ? "windows" : "ubuntu" },
 ];
 
@@ -25,13 +23,13 @@ async function downloadEngine(engine) {
         if (!res.ok) throw new Error(`GitHub API returned ${res.status} ${res.statusText}`);
         const json = await res.json();
         
-        let asset = json.assets.find(a => a.name.toLowerCase().includes(engine.match.toLowerCase()) && (isWin ? a.name.endsWith(".exe") : !a.name.endsWith(".zip") && !a.name.endsWith(".tar.gz") && !a.name.endsWith(".txt")));
+        let asset = json.assets.find(a => a.name.toLowerCase().includes(engine.match.toLowerCase()) && (isWin ? a.name.endsWith(".exe") : !a.name.endsWith(".zip") && !a.name.endsWith(".tar.gz") && !a.name.endsWith(".txt") && !a.name.endsWith(".bz2")));
         if (!asset) {
-            asset = json.assets.find(a => a.name.toLowerCase().includes(engine.match.toLowerCase()) && (a.name.endsWith(".zip") || a.name.endsWith(".tar.gz") || a.name.endsWith(".zst")));
+            asset = json.assets.find(a => a.name.toLowerCase().includes(engine.match.toLowerCase()) && (a.name.endsWith(".zip") || a.name.endsWith(".tar.gz") || a.name.endsWith(".zst") || a.name.endsWith(".bz2")));
         }
         if (!asset) {
             // fallback
-            asset = json.assets.find(a => a.name.toLowerCase().includes(isWin ? "windows" : "ubuntu") && (a.name.endsWith(".zip") || a.name.endsWith(".tar.gz")));
+            asset = json.assets.find(a => a.name.toLowerCase().includes(isWin ? "windows" : "ubuntu") && (a.name.endsWith(".zip") || a.name.endsWith(".tar.gz") || a.name.endsWith(".bz2")));
         }
         
         if (!asset) {
@@ -57,13 +55,23 @@ async function downloadEngine(engine) {
             } catch (e) {
                 console.error(`❌ Failed to extract ${asset.name}:`, e.message);
             }
-        } else if (asset.name.endsWith(".tar.gz") || asset.name.endsWith(".tar.zst") || asset.name.endsWith(".tgz")) {
+        } else if (asset.name.endsWith(".tar.gz") || asset.name.endsWith(".tar.zst") || asset.name.endsWith(".tgz") || asset.name.endsWith(".tar") || asset.name.endsWith(".tar.bz2")) {
             const tarPath = path.join(outDir, asset.name);
             await fs.writeFile(tarPath, Buffer.from(buffer));
             console.log(`Extracting ${asset.name}...`);
             try {
-                execSync(`tar -xf "${tarPath}" -C "${outDir}"`, { stdio: 'ignore' });
+                execSync(`tar -xf "${tarPath}" --strip-components=1 -C "${outDir}" || tar -xf "${tarPath}" -C "${outDir}"`, { stdio: 'ignore' });
                 await fs.unlink(tarPath); 
+                
+                // Fix extracted binary name
+                const files = await fs.readdir(outDir);
+                for (const f of files) {
+                    if (f !== engine.name && !f.includes(".")) {
+                        await fs.rename(path.join(outDir, f), path.join(outDir, engine.name));
+                        break;
+                    }
+                }
+                
                 console.log(`✅ Saved ${engine.name} (extracted)`);
             } catch (e) {
                 console.error(`❌ Failed to extract ${asset.name}:`, e.message);
