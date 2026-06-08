@@ -8,21 +8,13 @@ import {ApiTransport} from "./apiTransport.js";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {OPENINGS} from "./openings.js";
 
-export function createApp({
-    manager,
-    lichessEngineFactory,
-    mainEnginePath,
-    maxConcurrentGames = 4,
-    getToken = () => process.env.lichess_api_token,
-    BotClass = LichessBot,
-    notifier = nullNotifier,
-    analyzer = null
-} = {}) {
+export function createApp({manager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null} = {}) {
     const app = express();
 
     app.use(cors({
         origin: "*",
     }));
+
     app.use(express.json());
 
     let lichessBotInstance = null;
@@ -30,6 +22,7 @@ export function createApp({
     app.get("/api/health", (req, res) => {
         try {
             const mainEngine = manager.getEngine("Main");
+
             res.json({
                 status: "ok",
                 engine: mainEngine.ready ? "ready" : "starting",
@@ -50,6 +43,7 @@ export function createApp({
     app.post("/api/engine/setoption", async (req, res) => {
         try {
             const {name, value} = req.body ?? {};
+
             if (!name) return res.status(400).json({error: "Option name required"});
 
             const mainEngine = manager.getEngine("Main");
@@ -65,6 +59,7 @@ export function createApp({
     app.post("/api/engine/analysis", async (req, res) => {
         try {
             const {fen, depth = 10} = req.body ?? {};
+
             if (!fen) return res.status(400).json({error: "FEN required"});
 
             const mainEngine = manager.getEngine("Main");
@@ -99,11 +94,13 @@ export function createApp({
 
     app.post("/api/engine/bench", async (req, res) => {
         try {
-            const {mode = "depth", depth = 9, timeLimit = 30000, evalTime = 2000} = req.body ?? {};
+            const {mode = "depth", depth = 10, timeLimit = 30000, evalTime = 2000} = req.body ?? {};
             console.log(`Starting benchmark [Mode: ${mode}, Depth: ${depth}, Time: ${timeLimit}ms]...`);
 
-            const mainEngine = manager.getEngine("Main");
-            const results = await mainEngine.bench({mode, depth, timeLimit, evalTime});
+            const benchId = `bench-${Date.now()}`;
+            const benchEngine = await manager.registerEngine(benchId, mainEnginePath);
+            const results = await benchEngine.bench({mode, depth, timeLimit, evalTime});
+            await manager.shutdownEngine(benchId);
 
             console.log("Benchmark results:", results);
             res.json({status: "success", data: results});
@@ -272,6 +269,7 @@ export function createApp({
 
     app.get("/api/analysis/stats", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
+
         try {
             const stats = await analyzer.getStats();
             res.json(stats);
@@ -347,6 +345,7 @@ if (import.meta.main) {
             bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin")
         }
     });
+
     await manager.registerEngine("Main", JEWKIEBOT_PATH);
 
     const lichessEngineFactory = () => {
@@ -367,6 +366,7 @@ if (import.meta.main) {
     const analyzer = stockfishExists
         ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20})
         : null;
+
     if (!stockfishExists) console.warn("[Server] Stockfish not found — analysis endpoints disabled.");
 
     const {app} = createApp({

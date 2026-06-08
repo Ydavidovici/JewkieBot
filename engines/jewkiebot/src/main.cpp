@@ -216,7 +216,6 @@ static void handle_go(const std::string& line, Engine& engine) {
     settings.time_left_ms = 0;
     settings.increment_ms = 0;
     settings.moves_to_go = 0;
-    settings.movetime_ms = 0;
 
     std::istringstream iss(line);
     std::string token;
@@ -246,7 +245,9 @@ static void handle_go(const std::string& line, Engine& engine) {
     }
 
     if (movetime > 0) {
-        settings.movetime_ms = movetime;
+        settings.time_left_ms = movetime;
+        settings.increment_ms = 0;
+        settings.moves_to_go = 1;
     } else {
         settings.time_left_ms = whiteToMove ? wtime : btime;
         settings.increment_ms = whiteToMove ? winc : binc;
@@ -256,7 +257,6 @@ static void handle_go(const std::string& line, Engine& engine) {
     if (infinite) {
         settings.depth = 64;
         settings.time_left_ms = 0;
-        settings.movetime_ms = 0;
     }
 
     // 4. Execute

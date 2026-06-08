@@ -64,8 +64,7 @@ std::string Engine::playMove(const PlaySettings& settings) {
         settings.depth,
         settings.time_left_ms,
         settings.increment_ms,
-        settings.moves_to_go,
-        settings.movetime_ms
+        settings.moves_to_go
     );
 
     board.makeMove(best);

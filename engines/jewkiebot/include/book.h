@@ -36,7 +36,7 @@ public:
     // Decodes a 16-bit Polyglot move against the position's legal-move list.
     // Resolves castling (king-takes-rook) to the engine's CASTLE_* encoding.
     // Returns invalid Move() if no legal move matches. Exposed for tests.
-    static Move decodeMove(uint16_t raw, const Board& board);
+    static Move decodeMove(uint16_t raw, const Board& board, const std::vector<Move>& legal);
 
     // Seed the RNG (for reproducible tests).
     void seed(uint64_t s) { rng_.seed(s); }

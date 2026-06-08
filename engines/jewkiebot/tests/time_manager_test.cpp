@@ -453,10 +453,11 @@ static void test_search_movetime_uses_full_budget() {
     search.setThreadCount(1);
 
     auto t0 = std::chrono::steady_clock::now();
-    Move m = search.findBestMove(board, /*maxDepth=*/20, /*timeLeftMs=*/0, /*incMs=*/0, /*mtg=*/0, /*movetimeMs=*/500);
+    Move m = search.findBestMove(board, /*maxDepth=*/20, /*timeLeftMs=*/500, /*incMs=*/0, /*mtg=*/1);
     double ms = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count() / 1000.0;
 
+    std::cout << "  elapsed=" << ms << "ms  move=" << m.toString() << "\n";
     REQUIRE_MSG(m.isValid(), "must return a valid move");
     REQUIRE_MSG(ms >= 300.0,
                 "movetime=500ms: must spend at least 300ms thinking "

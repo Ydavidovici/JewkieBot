@@ -258,56 +258,7 @@ export class UciEngine extends EventEmitter {
         await this._sendRaw(cmd);
     }
 
-    async goWithEval(options = {}) {
-        await this.ensureReady();
 
-        const parts = ["go"];
-        if (options.depth)    parts.push(`depth ${options.depth}`);
-        if (options.moveTime) parts.push(`movetime ${options.moveTime}`);
-
-        // For depth-based analysis allow up to 5 minutes; movetime gets the normal buffer.
-        const safeTimeout = options.moveTime
-            ? options.moveTime + this.commandTimeoutBufferMs
-            : 300_000;
-
-        let scoreCp = null;
-        let isMate  = false;
-        let bestMove = null;
-
-        try {
-            const response = await this._sendCommand(
-                parts.join(" "),
-                (line) => line.startsWith("bestmove"),
-                (line) => {
-                    if (!line.startsWith("info")) return;
-                    if (line.includes("multipv") && !line.includes("multipv 1")) return;
-                    // Skip aspiration-window bounds — only use exact scores.
-                    if (line.includes("lowerbound") || line.includes("upperbound")) return;
-
-                    const cpMatch   = line.match(/\bscore cp (-?\d+)/);
-                    const mateMatch = line.match(/\bscore mate (-?\d+)/);
-                    const pvMatch   = line.match(/\bpv (\S+)/);
-
-                    if (cpMatch) {
-                        scoreCp = parseInt(cpMatch[1], 10);
-                        isMate  = false;
-                    } else if (mateMatch) {
-                        const n = parseInt(mateMatch[1], 10);
-                        // Encode mate distances as large cp values so CPL math still works.
-                        scoreCp = n > 0 ? 30_000 - n : -(30_000 + n);
-                        isMate  = true;
-                    }
-                    if (pvMatch) bestMove = pvMatch[1];
-                },
-                safeTimeout,
-            );
-            const move = response.split(" ")[1];
-            return {bestMove: move || bestMove, scoreCp, isMate};
-        } catch (e) {
-            console.error("[Engine] Error during 'goWithEval':", e);
-            return {bestMove: bestMove ?? "0000", scoreCp, isMate};
-        }
-    }
 
     async bench(options = {}) {
         await this.ensureReady();

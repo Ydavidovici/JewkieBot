@@ -13,7 +13,6 @@ struct PlaySettings {
     int time_left_ms;
     int increment_ms;
     int moves_to_go;
-    int movetime_ms;  // 0 = unset; >0 = UCI 'go movetime' fixed budget
 };
 
 struct BenchSettings;
