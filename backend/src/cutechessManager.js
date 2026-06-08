@@ -38,7 +38,7 @@ export class CutechessManager extends EventEmitter {
             args.push(...this._buildEngineArgs(opp));
         }
 
-        const eachArgs = ["-each", `tc=${timeControl}`];
+        const eachArgs = ["-each", `tc=${timeControl}`, `proto=uci`];
         if (depth) eachArgs.push(`depth=${depth}`);
         if (nodes) eachArgs.push(`nodes=${nodes}`);
 

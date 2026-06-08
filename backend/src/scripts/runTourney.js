@@ -7,7 +7,7 @@ import * as dotenv from "dotenv";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, "..", "..", ".env") });
+dotenv.config({ path: path.join(__dirname, "..", "..", "..", ".env") });
 
 const TOOLS_DIR = path.join(__dirname, "../../../tools");
 const ENGINES_DIR = path.join(__dirname, "../../../engines");
@@ -77,7 +77,12 @@ class TourneyManager extends CutechessManager {
         console.log("Loading 8 diverse open-source opponents...");
         for (const eng of DIVERSE_ENGINES) {
             const localPath = path.join(ENGINES_DIR, eng.exe);
-            const remotePath = path.join(baseRemoteDir, eng.exe);
+            let remotePath = path.join(baseRemoteDir, eng.exe);
+            
+            if (isRemote && process.env.REMOTE_OS === "linux") {
+                remotePath = remotePath.replace(/\.exe$/, "").replace(/\\/g, "/");
+            }
+            
             const activePath = isRemote ? remotePath : localPath;
 
             if (!isRemote && !fs.existsSync(localPath)) {
