@@ -77,22 +77,23 @@ class TourneyManager extends CutechessManager {
         const opponents = [];
         console.log("Loading 8 diverse open-source opponents...");
         for (const eng of DIVERSE_ENGINES) {
-            const localPath = path.join(ENGINES_DIR, eng.exe);
-            let remotePath = path.join(baseRemoteDir, eng.exe);
-            
-            if (isRemote && process.env.REMOTE_OS === "linux") {
-                remotePath = remotePath.replace(/\.exe$/, "").replace(/\\/g, "/");
+            let activePath = eng.exe;
+            if ((isRemote && process.env.REMOTE_OS === "linux") || (!isRemote && process.platform !== "win32")) {
+                activePath = activePath.replace(".exe", "").replace(/\\/g, "/");
             }
+
+            const localPath = path.join(ENGINES_DIR, activePath);
+            let remotePath = path.join(baseRemoteDir, activePath);
             
-            const activePath = isRemote ? remotePath : localPath;
+            const finalPath = isRemote ? remotePath : localPath;
 
             if (!isRemote && !fs.existsSync(localPath)) {
                 console.warn(`⚠️ Warning: ${eng.name} not found at ${localPath}. Did you run 'bun run download:engines'?`);
             } else {
                 opponents.push({
                     name: eng.name,
-                    path: activePath,
-                    sshConfig: getSshConfig(activePath),
+                    path: finalPath,
+                    sshConfig: getSshConfig(finalPath),
                     args: [`depth=${eng.depth}`]
                 });
             }
