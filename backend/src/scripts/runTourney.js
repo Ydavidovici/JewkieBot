@@ -22,10 +22,11 @@ const options = {
     games: { type: "string", default: "200" },
     tc: { type: "string", default: "10+0.1" },
     concurrency: { type: "string", default: "2" },
+    preset: { type: "string", default: "diverse" }
 };
 const { values } = parseArgs({ options, args: process.argv.slice(2) });
 
-const DIVERSE_ENGINES = [
+const STOCKFISH_ENGINES = [
     { name: "SF-Depth2", exe: "stockfish/stockfish", depth: 2 },
     { name: "SF-Depth3", exe: "stockfish/stockfish", depth: 3 },
     { name: "SF-Depth4", exe: "stockfish/stockfish", depth: 4 },
@@ -33,6 +34,13 @@ const DIVERSE_ENGINES = [
     { name: "SF-Depth6", exe: "stockfish/stockfish", depth: 6 },
     { name: "SF-Depth7", exe: "stockfish/stockfish", depth: 7 },
     { name: "SF-Depth8", exe: "stockfish/stockfish", depth: 8 },
+];
+
+const HUMAN_ENGINES = [
+    { name: "Ethereal", exe: "/usr/games/ethereal", depth: 4 },
+    { name: "Fruit", exe: "/usr/games/fruit", depth: 4 },
+    { name: "Toga2", exe: "/usr/games/toga2", depth: 4 },
+    { name: "Glaurung", exe: "/usr/games/glaurung", depth: 4 },
 ];
 
 class TourneyManager extends CutechessManager {
@@ -76,15 +84,18 @@ class TourneyManager extends CutechessManager {
         };
 
         const opponents = [];
-        console.log("Loading 8 diverse open-source opponents...");
-        for (const eng of DIVERSE_ENGINES) {
+        const selectedEngines = values.preset === "stockfish" ? STOCKFISH_ENGINES : HUMAN_ENGINES;
+        
+        console.log(`Loading ${selectedEngines.length} opponents for preset: ${values.preset}...`);
+        for (const eng of selectedEngines) {
             let activePath = eng.exe;
             if ((isRemote && process.env.REMOTE_OS === "linux") || (!isRemote && process.platform !== "win32")) {
                 activePath = activePath.replace(".exe", "").replace(/\\/g, "/");
             }
 
-            const localPath = path.join(ENGINES_DIR, activePath);
-            let remotePath = path.join(baseRemoteDir, activePath);
+            const isGlobalBinary = activePath.startsWith("/usr/");
+            const localPath = isGlobalBinary ? activePath : path.join(ENGINES_DIR, activePath);
+            let remotePath = isGlobalBinary ? activePath : path.join(baseRemoteDir, activePath);
             
             const finalPath = isRemote ? remotePath : localPath;
 
