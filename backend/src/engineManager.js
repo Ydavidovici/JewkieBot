@@ -46,9 +46,10 @@ export class UciEngine extends EventEmitter {
         this.isShuttingDown = false;
 
         try {
-            console.log(`[Engine] Spawning: ${this.cmd}`);
+            const cmdArray = Array.isArray(this.cmd) ? this.cmd : [this.cmd];
+            console.log(`[Engine] Spawning: ${cmdArray.join(" ")}`);
             this.process = this.spawnFn({
-                cmd: [this.cmd],
+                cmd: cmdArray,
                 stdin: "pipe",
                 stdout: "pipe",
                 stderr: "inherit",
@@ -86,7 +87,8 @@ export class UciEngine extends EventEmitter {
         await this.ensureReady();
 
         const parts = ["go"];
-        if (options.depth) parts.push(`depth ${options.depth}`);
+        if (options.depth)    parts.push(`depth ${options.depth}`);
+        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
 
         if (options.moveTime) {
             parts.push(`movetime ${options.moveTime}`);
@@ -318,14 +320,29 @@ export class EngineManager {
                 current: this.engines.size,
                 requested: label,
             });
-            throw err;
+            throw new Error(`Engine spawn cap reached (${this.engines.size}/${this.maxEngines})`);
         }
 
-        const engine = new UciEngine(enginePath, {
-            ...this.engineOptions,
-            notifier: this.notifier,
-            label,
-        });
+        let engine;
+        if (process.env.REMOTE_ENGINE_ENABLED === "true") {
+            const sshConfig = {
+                user: process.env.REMOTE_SSH_USER,
+                host: process.env.REMOTE_SSH_HOST,
+                keyPath: process.env.REMOTE_SSH_KEY_PATH,
+                stockfishPath: process.env.REMOTE_STOCKFISH_PATH
+            };
+            engine = new SshUciEngine(sshConfig, {
+                ...this.engineOptions,
+                notifier: this.notifier,
+                label,
+            });
+        } else {
+            engine = new UciEngine(enginePath, {
+                ...this.engineOptions,
+                notifier: this.notifier,
+                label,
+            });
+        }
         return engine;
     }
 
@@ -386,5 +403,24 @@ export class EngineManager {
 
         await Promise.allSettled(stopPromises);
         console.log("[Manager] All engines shut down successfully.");
+    }
+}
+
+export class SshUciEngine extends UciEngine {
+    constructor(sshConfig, options = {}) {
+        const cmd = ["ssh"];
+        if (sshConfig.keyPath) cmd.push("-i", sshConfig.keyPath);
+        cmd.push("-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30");
+        const target = sshConfig.user ? `${sshConfig.user}@${sshConfig.host}` : sshConfig.host;
+        cmd.push(target, sshConfig.stockfishPath);
+        super(cmd, options);
+        this.sshConfig = sshConfig;
+    }
+
+    async _handleCrash() {
+        if (!this.isShuttingDown) {
+            console.warn(`[SshUciEngine ${this.label}] SSH connection dropped or process crashed.`);
+        }
+        await super._handleCrash();
     }
 }

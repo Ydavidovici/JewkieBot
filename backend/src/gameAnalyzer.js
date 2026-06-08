@@ -1,5 +1,5 @@
 import {dbClient as defaultDbClient} from "./dbClient.js";
-import {UciEngine} from "./engineManager.js";
+import {EngineManager} from "./engineManager.js";
 
 export function classifyMove(cpLoss) {
     if (cpLoss === null || cpLoss === undefined) return null;
@@ -12,12 +12,12 @@ export function classifyMove(cpLoss) {
 export class GameAnalyzer {
     constructor(stockfishPath, options = {}) {
         this.stockfishPath = stockfishPath;
-        // depth takes priority over moveTimeMs when both are set
         this.depth      = options.depth      ?? 20;
         this.moveTimeMs = options.moveTimeMs ?? null;
         this.spawnFn    = options.spawnFn    ?? null;
         this._dbClient  = options.dbClient   ?? defaultDbClient;
-        this._engine    = options.engine     ?? null; // injectable for tests
+        this.concurrency = options.concurrency ?? 4;
+        this._manager   = new EngineManager({ maxEngines: this.concurrency });
         this._running   = false;
         this._aborted   = false;
         this.progress   = {total: 0, done: 0, currentGameId: null};
@@ -25,22 +25,9 @@ export class GameAnalyzer {
 
     get isRunning() { return this._running; }
 
-    async _getEngine() {
-        if (!this._engine) {
-            const opts = {label: "stockfish-analysis"};
-            if (this.spawnFn) opts.spawnFn = this.spawnFn;
-            this._engine = new UciEngine(this.stockfishPath, opts);
-            await this._engine.start();
-        }
-        return this._engine;
-    }
-
     async stop() {
         this._aborted = true;
-        if (this._engine && !this._engine.isShuttingDown) {
-            await this._engine.stop().catch(() => {});
-            this._engine = null;
-        }
+        await this._manager.shutdownAll();
         this._running = false;
     }
 
@@ -50,29 +37,50 @@ export class GameAnalyzer {
         this._aborted = false;
 
         try {
-            // Find games that have no move_evals rows at all yet.
             const unanalyzed = await this._dbClient.getUnanalyzedGames();
-
             this.progress = {total: unanalyzed.length, done: 0, currentGameId: null};
 
-            for (const {id} of unanalyzed) {
-                if (this._aborted) break;
-                this.progress.currentGameId = id;
-                await this.analyzeGame(id);
-                this.progress.done++;
+            if (unanalyzed.length === 0) return;
+
+            const engines = [];
+            for (let i = 0; i < Math.min(this.concurrency, unanalyzed.length); i++) {
+                const eng = this._manager.reserveEngine(`analysis-${i}`, this.stockfishPath);
+                await eng.start();
+                engines.push(eng);
             }
+
+            const processQueue = async (engine) => {
+                while (unanalyzed.length > 0 && !this._aborted) {
+                    const {id} = unanalyzed.shift();
+                    this.progress.currentGameId = id;
+                    await this.analyzeGame(id, engine);
+                    this.progress.done++;
+                }
+            };
+
+            await Promise.all(engines.map(processQueue));
         } finally {
             this.progress.currentGameId = null;
             this._running = false;
         }
     }
 
-    async analyzeGame(gameId) {
-        const engine = await this._getEngine();
+    async analyzeGame(gameId, providedEngine = null) {
+        // Fallback to reserving a temporary one if none provided, though analyzeAll passes it
+        let engine = providedEngine;
+        let isTempEngine = false;
+        if (!engine) {
+            engine = this._manager.reserveEngine(`analysis-single`, this.stockfishPath);
+            await engine.start();
+            isTempEngine = true;
+        }
 
         const moves = await this._dbClient.getGameMoves(gameId);
 
-        if (moves.length === 0) return;
+        if (moves.length === 0) {
+            if (isTempEngine) await this._manager.shutdownEngine(engine.label);
+            return;
+        }
 
         const evalOpts = this.moveTimeMs !== null
             ? {moveTime: this.moveTimeMs}
@@ -126,6 +134,10 @@ export class GameAnalyzer {
 
         if (rows.length > 0) {
             await this._dbClient.insertMoveEvals(gameId, rows);
+        }
+
+        if (isTempEngine) {
+            await this._manager.shutdownEngine(engine.label);
         }
     }
 

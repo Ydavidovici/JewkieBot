@@ -19,13 +19,10 @@ export function normalizeMove(move) {
 }
 
 export function mapResult(status, winner) {
-    if (winner === "white")
-        return "1-0";
-    else if (winner === "black")
-        return "0-1";
-    else if (["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"].includes(status))
-        return "1/2-1/2";
-    else return null
+    if (winner === "white") return "1-0";
+    if (winner === "black") return "0-1";
+    if (["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"].includes(status)) return "1/2-1/2";
+    return null;
 }
 
 export class LichessBot {

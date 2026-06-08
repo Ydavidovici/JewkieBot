@@ -60,7 +60,6 @@ class MockEngineManager {
         return this.engines.get(id);
     }
     async registerEngine(id, path) {
-        this.registerEngineCalls.push({ id, path });
         const e = {
             ready: true,
             position: mock(async () => {}),
@@ -69,6 +68,7 @@ class MockEngineManager {
             bench: mock(async () => ({ nps: 1234, nodes: 100 })),
             stop: mock(async () => {}),
         };
+        this.registerEngineCalls.push({ id, path, engineMock: e });
         this.engines.set(id, e);
         return e;
     }
@@ -231,23 +231,35 @@ describe("POST /api/engine/reset", () => {
 
 describe("POST /api/engine/bench", () => {
     it("passes through bench params and returns results", async () => {
-        const engine = manager.getEngine("Main");
         const res = await POST("/api/engine/bench", { mode: "time", depth: 12, timeLimit: 5000, evalTime: 1000 });
         expect(res.status).toBe(200);
-        expect(engine.bench).toHaveBeenCalledWith({ mode: "time", depth: 12, timeLimit: 5000, evalTime: 1000 });
+        
+        const benchCall = manager.registerEngineCalls.find(c => c.id.startsWith("bench-"));
+        expect(benchCall).toBeDefined();
+        
+        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ mode: "time", depth: 12, timeLimit: 5000, evalTime: 1000 });
+        
         const body = await res.json();
         expect(body.data).toEqual({ nps: 1234, nodes: 100 });
     });
 
     it("applies defaults when body is empty", async () => {
-        const engine = manager.getEngine("Main");
         await POST("/api/engine/bench", {});
-        expect(engine.bench).toHaveBeenCalledWith({ mode: "depth", depth: 9, timeLimit: 30000, evalTime: 2000 });
+        
+        const benchCall = manager.registerEngineCalls.find(c => c.id.startsWith("bench-"));
+        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ mode: "depth", depth: 10, timeLimit: 30000, evalTime: 2000 });
     });
 
     it("returns 500 when bench throws", async () => {
-        const engine = manager.getEngine("Main");
-        engine.bench = mock(async () => { throw new Error("bench died"); });
+        const originalRegister = manager.registerEngine.bind(manager);
+        manager.registerEngine = async (id, path) => {
+            const e = await originalRegister(id, path);
+            if (id.startsWith("bench-")) {
+                e.bench = mock(async () => { throw new Error("bench died"); });
+            }
+            return e;
+        };
+
         const res = await POST("/api/engine/bench", {});
         expect(res.status).toBe(500);
     });
