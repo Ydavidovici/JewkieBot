@@ -67,9 +67,10 @@ class TourneyManager extends CutechessManager {
             ? process.env.REMOTE_MY_ENGINE_PATH 
             : path.join(baseRemoteDir, "jewkiebot", "build", "jewkiebot.exe");
 
+        const myEngineLocalPath = process.platform === "win32" ? path.join(ENGINES_DIR, "jewkiebot", "build", "jewkiebot.exe") : path.join(ENGINES_DIR, "jewkiebot", "build", "jewkiebot");
         const myEngine = {
             name: "JewkieBot",
-            path: isRemote ? myEngineRemotePath : path.join(ENGINES_DIR, "jewkiebot", "build", "jewkiebot.exe"),
+            path: isRemote ? myEngineRemotePath : myEngineLocalPath,
             sshConfig: getSshConfig(myEngineRemotePath),
             args: []
         };
