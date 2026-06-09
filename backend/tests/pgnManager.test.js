@@ -1,12 +1,12 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PgnGenerator } from "../src/pgnGenerator.js";
+import { PgnManager } from "../src/pgnManager.js";
 import { dbClient } from "../src/dbClient.js";
 
 const DUMMY_PGN_PATH = path.join(__dirname, "dummy_test.pgn");
 
-describe("PgnGenerator", () => {
+describe("PgnManager", () => {
     beforeEach(() => {
         mock.restore();
     });
@@ -37,7 +37,7 @@ describe("PgnGenerator", () => {
                 insertGameMoves: insertGameMovesMock
             };
 
-            const generator = new PgnGenerator(mockedDbClient);
+            const generator = new PgnManager(mockedDbClient);
             const result = await generator.ingestPgnString(pgnString);
 
             expect(result.success).toBe(1);
@@ -90,7 +90,7 @@ describe("PgnGenerator", () => {
                 getGameMoves: getGameMovesMock
             };
 
-            const generator = new PgnGenerator(mockedDbClient);
+            const generator = new PgnManager(mockedDbClient);
             const pgnString = await generator.generatePgn([101]);
 
             expect(getGameMock).toHaveBeenCalledWith(101);

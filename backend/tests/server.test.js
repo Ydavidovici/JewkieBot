@@ -105,7 +105,10 @@ function GET(path) {
     return fetch(`${baseUrl}${path}`);
 }
 
+const originalConsoleError = console.error;
+
 beforeEach(async () => {
+    console.error = mock(() => {});
     mockBotInstances = [];
     nextStartBehavior = null;
     factoryCalls = 0;
@@ -131,6 +134,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+    console.error = originalConsoleError;
     await new Promise((resolve) => server?.close(resolve));
 });
 
