@@ -31,13 +31,15 @@ export class GameAnalyzer {
         this._running = false;
     }
 
-    async analyzeAll() {
+    async analyzeAll(playerName = null) {
         if (this._running) throw new Error("Analysis already running");
         this._running = true;
         this._aborted = false;
 
         try {
-            const unanalyzed = await this._dbClient.getUnanalyzedGames();
+            const unanalyzed = playerName
+                ? await this._dbClient.getUnanalyzedGamesByPlayer(playerName)
+                : await this._dbClient.getUnanalyzedGames();
             this.progress = {total: unanalyzed.length, done: 0, currentGameId: null};
 
             if (unanalyzed.length === 0) return;

@@ -28,7 +28,7 @@ async function main() {
     }, 2000);
 
     try {
-        await analyzer.analyzeAll();
+        await analyzer.analyzeAll("jewkiebot");
         clearInterval(interval);
         console.log(`\n✅ Analysis complete! ${analyzer.progress.done} games evaluated.`);
 

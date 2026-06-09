@@ -43,6 +43,15 @@ export const dbClient = {
         return await fetchApi("/games/unanalyzed");
     },
 
+    async getUnanalyzedGamesByPlayer(playerName) {
+        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}/unanalyzed`);
+    },
+
+    async getGamesByPlayer(playerName) {
+        // Automatically URL-encode the player name (e.g. for spaces or special chars)
+        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}`);
+    },
+
     async getGameMoves(id) {
         return await fetchApi(`/games/${id}/moves`);
     },
