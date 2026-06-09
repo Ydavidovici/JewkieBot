@@ -1,4 +1,4 @@
-import { Chess } from "chess.js";
+import {Chess} from "chess.js";
 import fs from "node:fs";
 
 export class PgnManager {
@@ -8,13 +8,17 @@ export class PgnManager {
 
     _splitPgn(pgnContent) {
         if (!pgnContent || pgnContent.trim() === "") return [];
+
         const chunks = pgnContent.split("[Event ");
+
         const games = [];
+
         for (const c of chunks) {
             if (c.trim().length > 0) {
                 games.push("[Event " + c);
             }
         }
+
         return games;
     }
 
@@ -22,13 +26,16 @@ export class PgnManager {
         if (!fs.existsSync(filePath)) {
             throw new Error(`File not found: ${filePath}`);
         }
+
         const content = fs.readFileSync(filePath, "utf-8");
+
         return await this.ingestPgnString(content);
     }
 
     async ingestPgnString(pgnContent) {
         const gamesText = this._splitPgn(pgnContent);
-        if (gamesText.length === 0) return { success: 0, failed: 0 };
+
+        if (gamesText.length === 0) return {success: 0, failed: 0};
 
         const gamesPayload = [];
         const parsedGames = [];
@@ -36,11 +43,11 @@ export class PgnManager {
         for (let i = 0; i < gamesText.length; i++) {
             const gameText = gamesText[i];
             const chess = new Chess();
-            
+
             try {
                 chess.loadPgn(gameText);
                 const headers = chess.header();
-                
+
                 gamesPayload.push({
                     _bulkIndex: i, // Correlation ID
                     whiteUsername: headers.White || "Unknown",
@@ -50,16 +57,16 @@ export class PgnManager {
                     result: headers.Result || "*",
                     termination: headers.Termination || null,
                     timeControl: headers.TimeControl || null,
-                    started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString()
+                    started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString(),
                 });
 
-                parsedGames.push({ index: i, history: chess.history({ verbose: true }), startFen: headers.FEN });
+                parsedGames.push({index: i, history: chess.history({verbose: true}), startFen: headers.FEN});
             } catch (e) {
                 console.error(`Error parsing game ${i + 1}:`, e.message);
             }
         }
 
-        if (gamesPayload.length === 0) return { success: 0, failed: 0 };
+        if (gamesPayload.length === 0) return {success: 0, failed: 0};
 
         console.log(`Sending bulk create request for ${gamesPayload.length} games in chunks...`);
         const GAME_CHUNK_SIZE = 2500;
@@ -82,18 +89,18 @@ export class PgnManager {
                 continue;
             }
 
-            const startFen = parsed.startFen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+            const startFen = parsed.startFen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
             const replayChess = new Chess(startFen);
             for (let ply = 0; ply < parsed.history.length; ply++) {
                 const moveInfo = parsed.history[ply];
                 const uci = moveInfo.from + moveInfo.to + (moveInfo.promotion || "");
                 replayChess.move(moveInfo.san);
-                
+
                 allMovesPayload.push({
                     game_id: cg.id,
                     ply: ply + 1,
                     uci: uci,
-                    fen_after: replayChess.fen()
+                    fen_after: replayChess.fen(),
                 });
             }
             success++;
@@ -107,7 +114,7 @@ export class PgnManager {
             for (let i = 0; i < allMovesPayload.length; i += chunkSize) {
                 chunks.push(allMovesPayload.slice(i, i + chunkSize));
             }
-            
+
             const CONCURRENCY = 5;
             for (let i = 0; i < chunks.length; i += CONCURRENCY) {
                 const batch = chunks.slice(i, i + CONCURRENCY);
@@ -115,7 +122,7 @@ export class PgnManager {
             }
         }
 
-        return { success, failed };
+        return {success, failed};
     }
 
     parsePgnToEpd(pgnContent) {
@@ -128,7 +135,7 @@ export class PgnManager {
             const chess = new Chess();
             try {
                 chess.loadPgn(pgn);
-            } catch(err) {
+            } catch (err) {
                 continue;
             }
 
@@ -136,13 +143,13 @@ export class PgnManager {
             let resultLabel = "0.5";
             if (resultHeader === "1-0") resultLabel = "1.0";
             if (resultHeader === "0-1") resultLabel = "0.0";
-            
+
             if (resultHeader === "*" || !resultHeader) continue;
 
             const history = chess.history();
-            const startFen = chess.header().FEN || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+            const startFen = chess.header().FEN || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
             const tempChess = new Chess(startFen);
-            
+
             for (let i = 0; i < history.length; i++) {
                 tempChess.move(history[i]);
                 if (i > 11) {
@@ -155,7 +162,7 @@ export class PgnManager {
             gameCount++;
         }
 
-        return { epdLines, positionCount, gameCount };
+        return {epdLines, positionCount, gameCount};
     }
 
     async generatePgn(gameIds) {
@@ -166,9 +173,9 @@ export class PgnManager {
             const game = await this.dbClient.getGame(id);
             if (!game) continue;
             const moves = await this.dbClient.getGameMoves(id);
-            
-            const dateStr = game.started_at 
-                ? new Date(game.started_at).toISOString().split("T")[0].replace(/-/g, ".") 
+
+            const dateStr = game.started_at
+                ? new Date(game.started_at).toISOString().split("T")[0].replace(/-/g, ".")
                 : "????.??.??";
 
             output += `[Event "Jewkiebot DB Export"]\n[Site "Local"]\n[Date "${dateStr}"]\n[Round "?"]\n`;
@@ -186,7 +193,7 @@ export class PgnManager {
                     let san = move.san;
                     if (!san) {
                         try {
-                            const moveObj = { from: move.uci.slice(0, 2), to: move.uci.slice(2, 4) };
+                            const moveObj = {from: move.uci.slice(0, 2), to: move.uci.slice(2, 4)};
                             if (move.uci.length > 4) moveObj.promotion = move.uci[4];
                             const result = chess.move(moveObj);
                             san = result ? result.san : move.uci;
@@ -196,7 +203,7 @@ export class PgnManager {
                     } else {
                         chess.move(san);
                     }
-                    
+
                     if (move.ply % 2 !== 0) {
                         moveStrings.push(`${Math.ceil(move.ply / 2)}. ${san}`);
                     } else {
@@ -204,7 +211,7 @@ export class PgnManager {
                     }
                 }
             }
-            
+
             output += moveStrings.join(" ") + ` ${game.result || "*"}\n\n`;
         }
         return output;
