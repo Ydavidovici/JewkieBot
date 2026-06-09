@@ -23,44 +23,62 @@ async function parseAndIngestPgn(filePath) {
     }
 }
 
+async function processDirectory(dirPath) {
+    console.log(`Checking directory ${dirPath} for PGN files...`);
+    if (!fsSync.existsSync(dirPath)) {
+        console.log(`Directory not found: ${dirPath}`);
+        return;
+    }
+
+    const files = await fs.readdir(dirPath);
+    const pgnFiles = files.filter(f => f.endsWith(".pgn"));
+
+    if (pgnFiles.length === 0) {
+        console.log("No .pgn files found.");
+        return;
+    }
+
+    for (const file of pgnFiles) {
+        const fullFilePath = path.join(dirPath, file);
+        await parseAndIngestPgn(fullFilePath);
+        
+        const ingestedDir = path.join(dirPath, "ingested");
+        if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+        
+        await fs.rename(fullFilePath, path.join(ingestedDir, file));
+        console.log(`Moved ${file} to ${ingestedDir}/`);
+    }
+
+    console.log(`\nAll PGN files in ${dirPath} have been ingested.`);
+}
+
 async function main() {
     const fileArg = process.argv[2];
     
     if (fileArg) {
         const fullPath = path.resolve(fileArg);
         if (!fsSync.existsSync(fullPath)) {
-            console.error(`File not found: ${fullPath}`);
+            console.error(`Path not found: ${fullPath}`);
             process.exit(1);
         }
-        await parseAndIngestPgn(fullPath);
-        return;
-    }
-
-    console.log("Checking storage directory for PGN files...");
-    if (!fsSync.existsSync(STORAGE_DIR)) {
-        console.log("Storage directory not found. No games to ingest.");
-        return;
-    }
-
-    const files = await fs.readdir(STORAGE_DIR);
-    const pgnFiles = files.filter(f => f.endsWith(".pgn"));
-
-    if (pgnFiles.length === 0) {
-        console.log("No .pgn files found in storage.");
-        return;
-    }
-
-    for (const file of pgnFiles) {
-        await parseAndIngestPgn(path.join(STORAGE_DIR, file));
-        // Optionally rename or move the file so we don't ingest it twice
-        const ingestedDir = path.join(STORAGE_DIR, "ingested");
-        if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
         
-        await fs.rename(path.join(STORAGE_DIR, file), path.join(ingestedDir, file));
-        console.log(`Moved ${file} to storage/ingested/`);
+        const stat = fsSync.statSync(fullPath);
+        if (stat.isDirectory()) {
+            await processDirectory(fullPath);
+        } else {
+            await parseAndIngestPgn(fullPath);
+            const parentDir = path.dirname(fullPath);
+            const ingestedDir = path.join(parentDir, "ingested");
+            if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+            const fileName = path.basename(fullPath);
+            await fs.rename(fullPath, path.join(ingestedDir, fileName));
+            console.log(`Moved ${fileName} to ${ingestedDir}/`);
+        }
+        return;
     }
 
-    console.log("\nAll PGN files have been ingested.");
+    // Default behavior
+    await processDirectory(STORAGE_DIR);
 }
 
 main().catch(console.error);
