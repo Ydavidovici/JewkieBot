@@ -1,6 +1,5 @@
-const BASE_URL = process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess";
-
 async function fetchApi(endpoint, options = {}) {
+    const BASE_URL = process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess";
     const res = await fetch(`${BASE_URL}${endpoint}`, {
         ...options,
         headers: {
