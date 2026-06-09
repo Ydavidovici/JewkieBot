@@ -3,8 +3,8 @@ import {EngineManager} from "./engineManager.js";
 
 export function classifyMove(cpLoss) {
     if (cpLoss === null || cpLoss === undefined) return null;
-    if (cpLoss <= 10)  return "good";
-    if (cpLoss <= 50)  return "inaccuracy";
+    if (cpLoss <= 10) return "good";
+    if (cpLoss <= 50) return "inaccuracy";
     if (cpLoss <= 100) return "mistake";
     return "blunder";
 }
@@ -12,18 +12,20 @@ export function classifyMove(cpLoss) {
 export class GameAnalyzer {
     constructor(stockfishPath, options = {}) {
         this.stockfishPath = stockfishPath;
-        this.depth      = options.depth      ?? 20;
+        this.depth = options.depth ?? 20;
         this.moveTimeMs = options.moveTimeMs ?? null;
-        this.spawnFn    = options.spawnFn    ?? null;
-        this._dbClient  = options.dbClient   ?? defaultDbClient;
+        this.spawnFn = options.spawnFn ?? null;
+        this._dbClient = options.dbClient ?? defaultDbClient;
         this.concurrency = options.concurrency ?? 4;
-        this._manager   = new EngineManager({ maxEngines: this.concurrency });
-        this._running   = false;
-        this._aborted   = false;
-        this.progress   = {total: 0, done: 0, currentGameId: null};
+        this._manager = new EngineManager({maxEngines: this.concurrency});
+        this._running = false;
+        this._aborted = false;
+        this.progress = {total: 0, done: 0, currentGameId: null};
     }
 
-    get isRunning() { return this._running; }
+    get isRunning() {
+        return this._running;
+    }
 
     async stop() {
         this._aborted = true;
@@ -111,7 +113,7 @@ export class GameAnalyzer {
 
         for (let i = 0; i < pairs && i < moves.length; i++) {
             const before = posEvals[i];
-            const after  = posEvals[i + 1];
+            const after = posEvals[i + 1];
 
             const bestCp = before.scoreCp;
             // `after.scoreCp` is from the opponent's perspective; negate to get
@@ -124,12 +126,12 @@ export class GameAnalyzer {
 
             rows.push({
                 gameId,
-                ply:            moves[i].ply,
-                bestUci:        before.bestMove ?? null,
+                ply: moves[i].ply,
+                bestUci: before.bestMove ?? null,
                 bestCp,
                 playedCp,
                 cpLoss,
-                isMate:         before.isMate ? 1 : 0,
+                isMate: before.isMate ? 1 : 0,
                 classification: classifyMove(cpLoss),
             });
         }
