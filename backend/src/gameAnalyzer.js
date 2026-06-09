@@ -12,6 +12,7 @@ export function classifyMove(cpLoss) {
 export class GameAnalyzer {
     constructor(stockfishPath, options = {}) {
         this.stockfishPath = stockfishPath;
+        this.studentPath = options.studentPath ?? null;
         this.depth = options.depth ?? 20;
         this.moveTimeMs = options.moveTimeMs ?? null;
         this.spawnFn = options.spawnFn ?? null;
@@ -50,14 +51,19 @@ export class GameAnalyzer {
             for (let i = 0; i < Math.min(this.concurrency, unanalyzed.length); i++) {
                 const eng = this._manager.reserveEngine(`analysis-${i}`, this.stockfishPath);
                 await eng.start();
-                engines.push(eng);
+                let student = null;
+                if (this.studentPath) {
+                    student = this._manager.reserveEngine(`student-${i}`, this.studentPath);
+                    await student.start();
+                }
+                engines.push({ teacher: eng, student });
             }
 
-            const processQueue = async (engine) => {
+            const processQueue = async (pair) => {
                 while (unanalyzed.length > 0 && !this._aborted) {
                     const {id} = unanalyzed.shift();
                     this.progress.currentGameId = id;
-                    await this.analyzeGame(id, engine);
+                    await this.analyzeGame(id, pair.teacher, pair.student);
                     this.progress.done++;
                 }
             };
@@ -69,14 +75,23 @@ export class GameAnalyzer {
         }
     }
 
-    async analyzeGame(gameId, providedEngine = null) {
+    async analyzeGame(gameId, providedEngine = null, providedStudent = null) {
         // Fallback to reserving a temporary one if none provided, though analyzeAll passes it
         let engine = providedEngine;
+        let student = providedStudent;
         let isTempEngine = false;
+        let isTempStudent = false;
+
         if (!engine) {
             engine = this._manager.reserveEngine(`analysis-single`, this.stockfishPath);
             await engine.start();
             isTempEngine = true;
+        }
+
+        if (!student && this.studentPath) {
+            student = this._manager.reserveEngine(`student-single`, this.studentPath);
+            await student.start();
+            isTempStudent = true;
         }
 
         const moves = await this._dbClient.getGameMoves(gameId);
@@ -95,16 +110,43 @@ export class GameAnalyzer {
         //               (or the starting position for k=0).
         // scoreCp is always from the side-to-move's perspective.
         const posEvals = [];
+        const studentEvals = [];
 
         await engine.uciNewGame();
         await engine.position("startpos");
-        posEvals.push(await engine.goWithEval(evalOpts));
+        if (student) {
+            await student.uciNewGame();
+            await student.position("startpos");
+        }
+
+        if (student) {
+            const [tEval, sEval] = await Promise.all([
+                engine.goWithEval(evalOpts),
+                student.goWithEval(evalOpts)
+            ]);
+            posEvals.push(tEval);
+            studentEvals.push(sEval);
+        } else {
+            posEvals.push(await engine.goWithEval(evalOpts));
+        }
 
         for (const move of moves) {
             if (this._aborted) return;
             if (!move.fenAfter) break; // chain requires FEN; stop here
+            
             await engine.position(move.fenAfter);
-            posEvals.push(await engine.goWithEval(evalOpts));
+            if (student) await student.position(move.fenAfter);
+
+            if (student) {
+                const [tEval, sEval] = await Promise.all([
+                    engine.goWithEval(evalOpts),
+                    student.goWithEval(evalOpts)
+                ]);
+                posEvals.push(tEval);
+                studentEvals.push(sEval);
+            } else {
+                posEvals.push(await engine.goWithEval(evalOpts));
+            }
         }
 
         // Build eval rows for each ply that has a complete (before, after) pair.
@@ -114,6 +156,8 @@ export class GameAnalyzer {
         for (let i = 0; i < pairs && i < moves.length; i++) {
             const before = posEvals[i];
             const after = posEvals[i + 1];
+
+            const studentBefore = studentEvals.length > i ? studentEvals[i] : null;
 
             const bestCp = before.scoreCp;
             // `after.scoreCp` is from the opponent's perspective; negate to get
@@ -133,6 +177,8 @@ export class GameAnalyzer {
                 cpLoss,
                 isMate: before.isMate ? 1 : 0,
                 classification: classifyMove(cpLoss),
+                studentCp: studentBefore ? studentBefore.scoreCp : null,
+                studentUci: studentBefore ? studentBefore.bestMove : null
             });
         }
 
@@ -142,6 +188,9 @@ export class GameAnalyzer {
 
         if (isTempEngine) {
             await this._manager.shutdownEngine(engine.label);
+        }
+        if (isTempStudent && student) {
+            await this._manager.shutdownEngine(student.label);
         }
     }
 

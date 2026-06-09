@@ -6,9 +6,12 @@ import * as dotenv from "dotenv";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({path: path.join(__dirname, "..", "..", ".env")});
 
-// Local fallback, but EngineManager will use SSH if process.env.REMOTE_ENGINE_ENABLED = true
-const STOCKFISH_PATH = path.join(__dirname, "..", "..", "..", "engines", "stockfish", "stockfish", "stockfish-windows-x86-64-avx2.exe");
+const isWindows = process.platform === "win32";
+const defaultStockfishName = isWindows ? "stockfish.exe" : "stockfish";
+const defaultStockfishPath = path.join(__dirname, "..", "..", "..", "engines", "stockfish", defaultStockfishName);
 
+// Local fallback, but EngineManager will use SSH if process.env.REMOTE_ENGINE_ENABLED = true
+const STOCKFISH_PATH = process.env.STOCKFISH_PATH || defaultStockfishPath;
 async function main() {
     console.log("🎓 Initializing Teacher Analysis (Stockfish 16.1)");
 
@@ -17,6 +20,7 @@ async function main() {
     const analyzer = new GameAnalyzer(STOCKFISH_PATH, {
         depth: 20,       // Deep analysis to act as a proper teacher
         concurrency: 4,   // Can process 4 games in parallel
+        studentPath: process.env.STUDENT_ENGINE_PATH || null,
     });
 
     console.log("Analyzing all unanalyzed games in the database...");
