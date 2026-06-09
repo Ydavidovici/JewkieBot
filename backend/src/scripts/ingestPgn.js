@@ -18,8 +18,10 @@ async function parseAndIngestPgn(filePath) {
         const result = await manager.ingestPgnFile(filePath);
         
         console.log(`✅ Completed ${filePath}: ${result.success} saved, ${result.failed} failed.`);
+        return true;
     } catch (err) {
         console.error(`❌ Error ingesting ${filePath}:`, err);
+        return false;
     }
 }
 
@@ -40,13 +42,15 @@ async function processDirectory(dirPath) {
 
     for (const file of pgnFiles) {
         const fullFilePath = path.join(dirPath, file);
-        await parseAndIngestPgn(fullFilePath);
+        const success = await parseAndIngestPgn(fullFilePath);
         
-        const ingestedDir = path.join(dirPath, "ingested");
-        if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
-        
-        await fs.rename(fullFilePath, path.join(ingestedDir, file));
-        console.log(`Moved ${file} to ${ingestedDir}/`);
+        if (success) {
+            const ingestedDir = path.join(dirPath, "ingested");
+            if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+            
+            await fs.rename(fullFilePath, path.join(ingestedDir, file));
+            console.log(`Moved ${file} to ${ingestedDir}/`);
+        }
     }
 
     console.log(`\nAll PGN files in ${dirPath} have been ingested.`);
@@ -66,13 +70,15 @@ async function main() {
         if (stat.isDirectory()) {
             await processDirectory(fullPath);
         } else {
-            await parseAndIngestPgn(fullPath);
-            const parentDir = path.dirname(fullPath);
-            const ingestedDir = path.join(parentDir, "ingested");
-            if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
-            const fileName = path.basename(fullPath);
-            await fs.rename(fullPath, path.join(ingestedDir, fileName));
-            console.log(`Moved ${fileName} to ${ingestedDir}/`);
+            const success = await parseAndIngestPgn(fullPath);
+            if (success) {
+                const parentDir = path.dirname(fullPath);
+                const ingestedDir = path.join(parentDir, "ingested");
+                if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+                const fileName = path.basename(fullPath);
+                await fs.rename(fullPath, path.join(ingestedDir, fileName));
+                console.log(`Moved ${fileName} to ${ingestedDir}/`);
+            }
         }
         return;
     }
