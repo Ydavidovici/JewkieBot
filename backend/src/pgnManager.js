@@ -52,7 +52,7 @@ export class PgnManager {
                     started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString()
                 });
 
-                parsedGames.push({ index: i, history: chess.history({ verbose: true }) });
+                parsedGames.push({ index: i, history: chess.history({ verbose: true }), startFen: headers.FEN });
             } catch (e) {
                 console.error(`Error parsing game ${i + 1}:`, e.message);
             }
@@ -75,7 +75,8 @@ export class PgnManager {
                 continue;
             }
 
-            const replayChess = new Chess();
+            const startFen = parsed.startFen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+            const replayChess = new Chess(startFen);
             for (let ply = 0; ply < parsed.history.length; ply++) {
                 const moveInfo = parsed.history[ply];
                 const uci = moveInfo.from + moveInfo.to + (moveInfo.promotion || "");
