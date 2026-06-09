@@ -60,8 +60,14 @@ export class PgnManager {
 
         if (gamesPayload.length === 0) return { success: 0, failed: 0 };
 
-        console.log(`Sending bulk create request for ${gamesPayload.length} games...`);
-        const createdGames = await this.dbClient.createGamesBulk(gamesPayload);
+        console.log(`Sending bulk create request for ${gamesPayload.length} games in chunks...`);
+        const GAME_CHUNK_SIZE = 2500;
+        let createdGames = [];
+        for (let i = 0; i < gamesPayload.length; i += GAME_CHUNK_SIZE) {
+            const chunk = gamesPayload.slice(i, i + GAME_CHUNK_SIZE);
+            const chunkResult = await this.dbClient.createGamesBulk(chunk);
+            createdGames = createdGames.concat(chunkResult);
+        }
 
         const allMovesPayload = [];
         let success = 0;
@@ -94,11 +100,17 @@ export class PgnManager {
 
         // We can optimize the moves insert as well if dbClient supports it
         if (allMovesPayload.length > 0) {
-            console.log(`Sending bulk create request for ${allMovesPayload.length} total moves...`);
-            const chunkSize = 500; // Small enough to bypass Express's default 100kb JSON body limit
+            console.log(`Sending bulk create request for ${allMovesPayload.length} total moves in chunks...`);
+            const chunkSize = 5000;
+            const chunks = [];
             for (let i = 0; i < allMovesPayload.length; i += chunkSize) {
-                const chunk = allMovesPayload.slice(i, i + chunkSize);
-                await this.dbClient.insertMovesBulk(chunk);
+                chunks.push(allMovesPayload.slice(i, i + chunkSize));
+            }
+            
+            const CONCURRENCY = 5;
+            for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+                const batch = chunks.slice(i, i + CONCURRENCY);
+                await Promise.all(batch.map(chunk => this.dbClient.insertMovesBulk(chunk)));
             }
         }
 
