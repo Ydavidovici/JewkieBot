@@ -132,10 +132,11 @@ export class GameAnalyzer {
 
         for (const move of moves) {
             if (this._aborted) return;
-            if (!move.fenAfter) break; // chain requires FEN; stop here
+            const fenAfter = move.fen_after || move.fenAfter;
+            if (!fenAfter) break; // chain requires FEN; stop here
             
-            await engine.position(move.fenAfter);
-            if (student) await student.position(move.fenAfter);
+            await engine.position(fenAfter);
+            if (student) await student.position(fenAfter);
 
             if (student) {
                 const [tEval, sEval] = await Promise.all([
