@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <random>
+#include <bit>
 
 uint64_t Board::piece_keys[12][64];
 uint64_t Board::en_passant_keys[64];
@@ -13,7 +14,6 @@ uint64_t Board::castling_keys[16];
 uint64_t Board::side_key;
 std::once_flag Board::zobrist_once_flag_;
 
-// FIXME: intialize with values?
 Board::Board() {
     // init zobrist
     std::call_once(zobrist_once_flag_, []() {
@@ -81,7 +81,7 @@ uint64_t Board::calculateZobristKey(const Board& board) {
         for (int p = 0; p < PieceTypeCount; ++p) {
             uint64_t bb = (*bitboards[color])[p];
             while (bb) {
-                int sq = __builtin_ctzll(bb);
+                int sq = std::countr_zero(bb);
                 bb &= bb - 1;
                 key ^= piece_keys[p + offset][sq];
             }
@@ -278,7 +278,7 @@ std::vector<Move> Board::generatePseudoMoves() const {
 
     uint64_t scan_pawns = pawn_bitboard;
     while (scan_pawns) {
-        int pawn_square_index = __builtin_ctzll(scan_pawns);
+        int pawn_square_index = std::countr_zero(scan_pawns);
         scan_pawns &= scan_pawns - 1;
 
         int one_step_square_index = pawn_square_index + forward_direction;
@@ -325,7 +325,7 @@ std::vector<Move> Board::generatePseudoMoves() const {
     uint64_t knight_bitboard = (us_color == Color::WHITE ? white_bitboards[KNIGHT] : black_bitboards[KNIGHT]);
     uint64_t scan_knights = knight_bitboard;
     while (scan_knights) {
-        int knight_square_index = __builtin_ctzll(scan_knights);
+        int knight_square_index = std::countr_zero(scan_knights);
         scan_knights &= scan_knights - 1;
 
         for (int direction : knight_directions) {
@@ -350,7 +350,7 @@ std::vector<Move> Board::generatePseudoMoves() const {
     auto slidePieces = [&](uint64_t piece_bitboard, const int file_directions[], const int rank_directions[], int direction_count) {
         uint64_t scan_sliders = piece_bitboard;
         while (scan_sliders) {
-            int from_square_index = __builtin_ctzll(scan_sliders);
+            int from_square_index = std::countr_zero(scan_sliders);
             scan_sliders &= scan_sliders - 1;
 
             int start_file = from_square_index % 8;
@@ -402,7 +402,7 @@ std::vector<Move> Board::generatePseudoMoves() const {
     uint64_t king_bitboard = (us_color == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
     uint64_t scan_kings = king_bitboard;
     while (scan_kings) {
-        int king_square_index = __builtin_ctzll(scan_kings);
+        int king_square_index = std::countr_zero(scan_kings);
         scan_kings &= scan_kings - 1;
 
         for (int direction : king_directions) {
@@ -450,7 +450,7 @@ std::vector<Move> Board::generatePseudoMoves() const {
 int Board::findKing(Color color) const {
     uint64_t king_bitboard = (color == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
     assert(king_bitboard != 0);
-    return __builtin_ctzll(king_bitboard);
+    return std::countr_zero(king_bitboard);
 }
 
 bool Board::isSquareAttacked(int squareIndex, Color attackingColor) const {

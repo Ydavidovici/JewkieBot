@@ -8,19 +8,43 @@ export class CutechessManager extends EventEmitter {
         this.process = null;
     }
 
-    async runGauntlet({myEngine, opponents, timeControl = "10+0.1", rounds = 50, concurrency = 4, pgnOut = "gauntlet.pgn", openingBook = null}) {
+    _buildEngineArgs(engineInfo) {
+        const args = ["-engine", `name=${engineInfo.name}`];
+        if (engineInfo.sshConfig) {
+            args.push(`cmd=ssh`);
+            if (engineInfo.sshConfig.keyPath) {
+                args.push(`arg=-i`, `arg=${engineInfo.sshConfig.keyPath}`);
+            }
+            args.push(`arg=-o`, `arg=StrictHostKeyChecking=no`);
+            args.push(`arg=-o`, `arg=ServerAliveInterval=30`);
+            const target = engineInfo.sshConfig.user ? `${engineInfo.sshConfig.user}@${engineInfo.sshConfig.host}` : engineInfo.sshConfig.host;
+            args.push(`arg=${target}`);
+            args.push(`arg=${engineInfo.sshConfig.stockfishPath}`);
+        } else {
+            args.push(`cmd=${engineInfo.path}`);
+        }
+        if (engineInfo.args) args.push(...engineInfo.args);
+        return args;
+    }
+
+    async runGauntlet({myEngine, opponents, timeControl = "10+0.1", depth = null, nodes = null, rounds = 50, concurrency = 4, pgnOut = "gauntlet.pgn", openingBook = null}) {
         if (this.process) throw new Error("A tournament is already running!");
 
         console.log(`[Cutechess] Starting Gauntlet: ${myEngine.name} vs ${opponents.length} opponents.`);
 
-        const args = ["-engine", `name=${myEngine.name}`, `cmd=${myEngine.path}`];
+        const args = [];
+        args.push(...this._buildEngineArgs(myEngine));
         for (const opp of opponents) {
-            args.push("-engine", `name=${opp.name}`, `cmd=${opp.path}`);
-            if (opp.args) args.push(...opp.args);
+            args.push(...this._buildEngineArgs(opp));
         }
 
+        const eachArgs = ["-each", `tc=${timeControl}`, `proto=uci`];
+        if (depth) eachArgs.push(`depth=${depth}`);
+        if (nodes) eachArgs.push(`nodes=${nodes}`);
+
         args.push(
-            "-each", `tc=${timeControl}`,
+            "-tournament", "gauntlet",
+            ...eachArgs,
             "-rounds", rounds.toString(),
             "-games", "2",
             "-repeat",

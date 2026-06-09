@@ -18,34 +18,10 @@ export function normalizeMove(move) {
     return move;
 }
 
-export function computeMoveTime(remainingMs, incMs, totalTimeMs) {
-    const inc = incMs ?? 0;
-
-    if (remainingMs == null) return 5000;
-
-    const total = totalTimeMs ?? remainingMs;
-
-    // Previously caps were tuned so conservatively that on a 3-minute game we'd
-    // end with 2:45 still on the clock — the engine was barely thinking. These
-    // budgets give the engine real headroom per move.
-    let cap;
-    if      (total >= 1_500_000) cap = 120_000;
-    else if (total >=   480_000) cap =  30_000;
-    else if (total >=   180_000) cap =  12_000;
-    else if (total >=    60_000) cap =   4_000;
-    else                         cap =   1_500;
-
-    const estimate = Math.floor(remainingMs / 20 + inc * 0.95);
-    const safety   = Math.floor(remainingMs * 0.85);
-
-    return Math.max(200, Math.min(estimate, cap, safety));
-}
-
 export function mapResult(status, winner) {
     if (winner === "white") return "1-0";
     if (winner === "black") return "0-1";
-    const draws = ["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"];
-    if (draws.includes(status)) return "1/2-1/2";
+    if (["draw", "stalemate", "threefoldRepetition", "insufficient", "fiftyMoves", "outoftime", "timeout"].includes(status)) return "1/2-1/2";
     return null;
 }
 
@@ -110,31 +86,23 @@ export class LichessBot {
         // Capped by maxConcurrentGames as a safety.
         const cappedTarget = Math.min(target, this.maxConcurrentGames);
 
-        this.autoplay = {
-            limit,
-            increment,
-            rated,
-            target: cappedTarget,
-            mode,       // "near" (default) or "weakest"
-            window,     // only used when mode === "near"
-            whiteOpeningId,
-            blackOpeningId,
-            currentBackoffMs: 0,
-            timer: null,
-            huntInFlight: false,
-        };
+        this.autoplay = {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId, currentBackoffMs: 0, timer: null, huntInFlight: false};
 
         this.notifier.info("[Autoplay] Autoplay enabled", {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId});
-        const wStr = whiteOpeningId ? `white=${whiteOpeningId}` : "";
-        const bStr = blackOpeningId ? `${wStr ? ", " : ""}black=${blackOpeningId}` : "";
-        const optStr = wStr || bStr ? `, ${wStr}${bStr}` : "";
-        console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optStr})`);
+
+        const whiteString = whiteOpeningId ? `white=${whiteOpeningId}` : "";
+        const blackString = blackOpeningId ? `${whiteString ? ", " : ""}black=${blackOpeningId}` : "";
+        const optionsString = whiteString || blackString ? `, ${whiteString}${blackString}` : "";
+
+        console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optionsString})`);
         this._tickAutoplay();
     }
 
     stopAutoplay() {
         if (!this.autoplay) return;
+
         if (this.autoplay.timer) clearTimeout(this.autoplay.timer);
+
         this.autoplay = null;
         this.notifier.info("[Autoplay] Autoplay disabled");
         console.log("[Autoplay] Disabled");
@@ -150,6 +118,7 @@ export class LichessBot {
     // slow safety-net timer so we recover even if nothing else triggers us.
     _tickAutoplay() {
         if (!this.autoplay) return;
+
         if (this.autoplay.timer) {
             clearTimeout(this.autoplay.timer);
             this.autoplay.timer = null;
@@ -171,13 +140,13 @@ export class LichessBot {
         }
 
         this.autoplay.huntInFlight = true;
+
         const {limit, increment, rated, mode, window} = this.autoplay;
 
         const huntPromise = mode === "weakest"
             ? this.huntWeakestBot(limit, increment, rated)
             : this.huntNearRating(limit, increment, rated, {window});
 
-        // Don't await — let it run in the background while we schedule the next tick.
         huntPromise
             .then(() => {
                 if (!this.autoplay) return;
@@ -185,7 +154,9 @@ export class LichessBot {
             })
             .catch(err => {
                 if (!this.autoplay) return;
+
                 let next;
+
                 if (err instanceof LichessRateLimited) {
                     // Honour Lichess's Retry-After instead of doubling, but
                     // never go below the existing exponential backoff (in
@@ -202,7 +173,9 @@ export class LichessBot {
             })
             .finally(() => {
                 if (!this.autoplay) return;
+
                 this.autoplay.huntInFlight = false;
+
                 const wait = this.autoplay.currentBackoffMs || 10_000;
                 this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
             });
@@ -210,6 +183,7 @@ export class LichessBot {
 
     async _loadRateLimitState() {
         if (process.env.NODE_ENV === "test") return;
+
         try {
             const file = Bun.file("lichess-rate-limit.json");
             if (await file.exists()) {
@@ -245,7 +219,9 @@ export class LichessBot {
 
     async _ensureProfile() {
         if (this.botProfile) return true;
+
         if (this._isRateLimited()) return false;
+
         try {
             let res;
             try {
@@ -376,6 +352,7 @@ export class LichessBot {
 
         const variant = challenge.variant?.key;
 
+        // TODO: support variants
         if (variant !== "standard") {
             console.log(`[Challenge ${challenge.id}] Declining — unsupported variant: ${variant}`);
             await this.declineChallenge(challenge.id, "variant");
@@ -420,6 +397,7 @@ export class LichessBot {
         this.gameControllers.set(gameId, gameController);
 
         let engine;
+
         try {
             engine = this.engineFactory();
         } catch (err) {
@@ -481,7 +459,7 @@ export class LichessBot {
                     const whiteUsername = obj.white?.id || obj.white?.name || "ai";
                     const blackUsername = obj.black?.id || obj.black?.name || "ai";
                     const myId = this.botProfile.toLowerCase();
-                    myColor = whiteUsername.toLowerCase() === myId ? "w" : "b";
+                    myColor = whiteUsername.toLowerCase() === myId ? "white" : "black";
                     initialFen = obj.initialFen || "startpos";
                     movesStr = obj.state?.moves || "";
                     timeInfo = extractTime(obj.state);
@@ -622,15 +600,10 @@ export class LichessBot {
             return false;
         }
 
-        const myTime = myColor === "w" ? timeInfo.wtime : timeInfo.btime;
-        const myInc  = myColor === "w" ? timeInfo.winc  : timeInfo.binc;
-        const moveTimeMs = computeMoveTime(myTime, myInc, totalTimeMs);
-
         let rawMove;
 
         try {
             rawMove = await engine.go({
-                moveTime: moveTimeMs,
                 whiteTime: timeInfo.wtime,
                 blackTime: timeInfo.btime,
                 whiteInc:  timeInfo.winc,
@@ -642,7 +615,7 @@ export class LichessBot {
         }
 
         const bestMove = normalizeMove(rawMove);
-        console.log(`[${gameId}] Engine: ${bestMove} (allocated ${moveTimeMs}ms)`);
+        console.log(`[${gameId}] Engine: ${bestMove}`);
 
         if (!bestMove || bestMove === "(none)" || bestMove === "0000") {
             console.warn(`[${gameId}] No valid move — resigning.`);
@@ -653,14 +626,14 @@ export class LichessBot {
         return await this.sendMove(gameId, bestMove);
     }
 
-    isMyTurn(initialFen, movesStr, myColor) {
-        let startColor = "w";
+    isMyTurn(initialFen, movesString, myColor) {
+        let startingColor = "white";
         if (initialFen && initialFen !== "startpos") {
             const parts = initialFen.split(" ");
-            if (parts.length >= 2) startColor = parts[1];
+            if (parts.length >= 2) startingColor = parts[1] === "w" ? "white" : "black";
         }
-        const moveCount = movesStr.trim() === "" ? 0 : movesStr.trim().split(" ").length;
-        const currentColor = moveCount % 2 === 0 ? startColor : (startColor === "w" ? "b" : "w");
+        const moveCount = movesString.trim() === "" ? 0 : movesString.trim().split(" ").length;
+        const currentColor = moveCount % 2 === 0 ? startingColor : (startingColor === "white" ? "black" : "white");
         return currentColor === myColor;
     }
 
@@ -707,18 +680,7 @@ export class LichessBot {
 
     async createDbGame(lichessGameId, {whiteUsername, blackUsername, variant, rated, timeControl, whiteRating, blackRating}) {
         try {
-            const game = await dbClient.createGame({
-                lichessGameId,
-                whiteUsername,
-                blackUsername,
-                variant,
-                rated,
-                timeControl,
-                whiteRating,
-                blackRating,
-                env: process.env.APP_ENV || "prod",
-                source: "lichess"
-            });
+            const game = await dbClient.createGame({lichessGameId, whiteUsername, blackUsername, variant, rated, timeControl, whiteRating, blackRating, env: process.env.APP_ENV || "prod", source: "lichess"});
             
             this.dbGameIds.set(lichessGameId, game.id);
 
@@ -730,18 +692,18 @@ export class LichessBot {
         }
     }
 
-    async saveNewMoves(lichessGameId, movesStr) {
+    async saveNewMoves(lichessGameId, movesString) {
         const dbGameId = this.dbGameIds.get(lichessGameId);
         if (dbGameId == null) return;
 
-        const allMoves = movesStr.trim() === "" ? [] : movesStr.trim().split(" ");
-        const savedPly = this.savedPlies.get(lichessGameId) ?? 0;
-        const newMoves = allMoves.slice(savedPly);
+        const allMoves = movesString.trim() === "" ? [] : movesString.trim().split(" ");
+        const savedPliesCount = this.savedPlies.get(lichessGameId) ?? 0;
+        const newMoves = allMoves.slice(savedPliesCount);
         if (newMoves.length === 0) return;
 
         try {
             await dbClient.insertGameMoves(dbGameId, newMoves.map((uci, i) => ({
-                ply: savedPly + i + 1,
+                ply: savedPliesCount + i + 1,
                 uci,
             })));
             this.savedPlies.set(lichessGameId, allMoves.length);
@@ -988,11 +950,11 @@ export class LichessBot {
 
     // Pick a Lichess perf name (bullet/blitz/rapid/classical) from a time control.
     // Uses Lichess's own classification: estimated = initialSec + 40 * incSec.
-    _perfFromTc(limitSec, incrementSec) {
-        const est = limitSec + 40 * incrementSec;
-        if (est < 180) return "bullet";
-        if (est < 480) return "blitz";
-        if (est < 1500) return "rapid";
+    _performanceFromTimeControl(limitSec, incrementSec) {
+        const estimatedSeconds = limitSec + 40 * incrementSec;
+        if (estimatedSeconds < 180) return "bullet";
+        if (estimatedSeconds < 480) return "blitz";
+        if (estimatedSeconds < 1500) return "rapid";
         return "classical";
     }
 
@@ -1015,7 +977,7 @@ export class LichessBot {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
         }
-        const perf = this._perfFromTc(limit, increment);
+        const perf = this._performanceFromTimeControl(limit, increment);
         const {rating: myRating, prov} = await this._fetchMyRating(perf);
         console.log(`[Hunt] My ${perf} rating: ${myRating}${prov ? " (provisional)" : ""}; window ±${window} (max ±${maxWindow})`);
 
@@ -1173,9 +1135,9 @@ export class LichessBot {
         return res;
     }
 
-    async _fetchOnlineBots(nb) {
+    async _fetchOnlineBots(limit) {
         if (!this._onlineBotsCache || this._now() - this._onlineBotsCache.time > 30000) {
-            const res = await this._lichessFetch(`https://lichess.org/api/bot/online?nb=${nb}`, {
+            const res = await this._lichessFetch(`https://lichess.org/api/bot/online?nb=${limit}`, {
                 headers: {Accept: "application/x-ndjson"},
             });
             if (!res.ok) throw new Error("Failed to fetch online bots");

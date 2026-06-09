@@ -25,3 +25,4 @@ storage
 src/jewkiebot
 src/jewkiebot.exe
 lichess-rate-limit.json
+ingested/

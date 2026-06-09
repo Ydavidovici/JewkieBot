@@ -46,9 +46,10 @@ export class UciEngine extends EventEmitter {
         this.isShuttingDown = false;
 
         try {
-            console.log(`[Engine] Spawning: ${this.cmd}`);
+            const cmdArray = Array.isArray(this.cmd) ? this.cmd : [this.cmd];
+            console.log(`[Engine] Spawning: ${cmdArray.join(" ")}`);
             this.process = this.spawnFn({
-                cmd: [this.cmd],
+                cmd: cmdArray,
                 stdin: "pipe",
                 stdout: "pipe",
                 stderr: "inherit",
@@ -86,7 +87,8 @@ export class UciEngine extends EventEmitter {
         await this.ensureReady();
 
         const parts = ["go"];
-        if (options.depth) parts.push(`depth ${options.depth}`);
+        if (options.depth)    parts.push(`depth ${options.depth}`);
+        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
 
         if (options.moveTime) {
             parts.push(`movetime ${options.moveTime}`);
@@ -116,6 +118,65 @@ export class UciEngine extends EventEmitter {
         } catch (e) {
             console.error("[Engine] Error during 'go':", e);
             return currentBestMove !== "(none)" ? currentBestMove : "0000";
+        }
+    }
+
+    async goWithEval(options = {}) {
+        await this.ensureReady();
+
+        const parts = ["go"];
+        if (options.depth)    parts.push(`depth ${options.depth}`);
+        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
+
+        if (options.moveTime) {
+            parts.push(`movetime ${options.moveTime}`);
+        } else {
+            if (options.whiteTime) parts.push(`wtime ${options.whiteTime}`);
+            if (options.blackTime) parts.push(`btime ${options.blackTime}`);
+            if (options.whiteInc  != null) parts.push(`winc ${options.whiteInc}`);
+            if (options.blackInc  != null) parts.push(`binc ${options.blackInc}`);
+        }
+
+        let safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
+        let currentBestMove = "(none)";
+        let scoreCp = null;
+        let isMate = false;
+
+        try {
+            const response = await this._sendCommand(
+                parts.join(" "),
+                (line) => line.startsWith("bestmove"),
+                (line) => {
+                    if (line.startsWith("info")) {
+                        if (line.includes(" score cp ")) {
+                            const match = line.match(/score cp (-?\d+)/);
+                            if (match) {
+                                scoreCp = parseInt(match[1], 10);
+                                isMate = false;
+                            }
+                        } else if (line.includes(" score mate ")) {
+                            const match = line.match(/score mate (-?\d+)/);
+                            if (match) {
+                                scoreCp = parseInt(match[1], 10) > 0 ? 10000 : -10000;
+                                isMate = true;
+                            }
+                        }
+                        if (line.includes(" pv ")) {
+                            const moves = line.split(" pv ")[1]?.split(" ");
+                            if (moves && moves[0]) currentBestMove = moves[0];
+                        }
+                    }
+                },
+                safeTimeout,
+            );
+            return {
+                bestMove: response.split(" ")[1] || currentBestMove,
+                scoreCp,
+                isMate
+            };
+        } catch (e) {
+            console.error("[Engine] Error during 'goWithEval':", e);
+            return { bestMove: currentBestMove !== "(none)" ? currentBestMove : "0000", scoreCp: null, isMate: false };
         }
     }
 
@@ -258,56 +319,7 @@ export class UciEngine extends EventEmitter {
         await this._sendRaw(cmd);
     }
 
-    async goWithEval(options = {}) {
-        await this.ensureReady();
 
-        const parts = ["go"];
-        if (options.depth)    parts.push(`depth ${options.depth}`);
-        if (options.moveTime) parts.push(`movetime ${options.moveTime}`);
-
-        // For depth-based analysis allow up to 5 minutes; movetime gets the normal buffer.
-        const safeTimeout = options.moveTime
-            ? options.moveTime + this.commandTimeoutBufferMs
-            : 300_000;
-
-        let scoreCp = null;
-        let isMate  = false;
-        let bestMove = null;
-
-        try {
-            const response = await this._sendCommand(
-                parts.join(" "),
-                (line) => line.startsWith("bestmove"),
-                (line) => {
-                    if (!line.startsWith("info")) return;
-                    if (line.includes("multipv") && !line.includes("multipv 1")) return;
-                    // Skip aspiration-window bounds — only use exact scores.
-                    if (line.includes("lowerbound") || line.includes("upperbound")) return;
-
-                    const cpMatch   = line.match(/\bscore cp (-?\d+)/);
-                    const mateMatch = line.match(/\bscore mate (-?\d+)/);
-                    const pvMatch   = line.match(/\bpv (\S+)/);
-
-                    if (cpMatch) {
-                        scoreCp = parseInt(cpMatch[1], 10);
-                        isMate  = false;
-                    } else if (mateMatch) {
-                        const n = parseInt(mateMatch[1], 10);
-                        // Encode mate distances as large cp values so CPL math still works.
-                        scoreCp = n > 0 ? 30_000 - n : -(30_000 + n);
-                        isMate  = true;
-                    }
-                    if (pvMatch) bestMove = pvMatch[1];
-                },
-                safeTimeout,
-            );
-            const move = response.split(" ")[1];
-            return {bestMove: move || bestMove, scoreCp, isMate};
-        } catch (e) {
-            console.error("[Engine] Error during 'goWithEval':", e);
-            return {bestMove: bestMove ?? "0000", scoreCp, isMate};
-        }
-    }
 
     async bench(options = {}) {
         await this.ensureReady();
@@ -367,14 +379,29 @@ export class EngineManager {
                 current: this.engines.size,
                 requested: label,
             });
-            throw err;
+            throw new Error(`Engine spawn cap reached (${this.engines.size}/${this.maxEngines})`);
         }
 
-        const engine = new UciEngine(enginePath, {
-            ...this.engineOptions,
-            notifier: this.notifier,
-            label,
-        });
+        let engine;
+        if (process.env.REMOTE_ENGINE_ENABLED === "true") {
+            const sshConfig = {
+                user: process.env.REMOTE_SSH_USER,
+                host: process.env.REMOTE_SSH_HOST,
+                keyPath: process.env.REMOTE_SSH_KEY_PATH,
+                stockfishPath: process.env.REMOTE_STOCKFISH_PATH
+            };
+            engine = new SshUciEngine(sshConfig, {
+                ...this.engineOptions,
+                notifier: this.notifier,
+                label,
+            });
+        } else {
+            engine = new UciEngine(enginePath, {
+                ...this.engineOptions,
+                notifier: this.notifier,
+                label,
+            });
+        }
         return engine;
     }
 
@@ -435,5 +462,24 @@ export class EngineManager {
 
         await Promise.allSettled(stopPromises);
         console.log("[Manager] All engines shut down successfully.");
+    }
+}
+
+export class SshUciEngine extends UciEngine {
+    constructor(sshConfig, options = {}) {
+        const cmd = ["ssh"];
+        if (sshConfig.keyPath) cmd.push("-i", sshConfig.keyPath);
+        cmd.push("-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30");
+        const target = sshConfig.user ? `${sshConfig.user}@${sshConfig.host}` : sshConfig.host;
+        cmd.push(target, sshConfig.stockfishPath);
+        super(cmd, options);
+        this.sshConfig = sshConfig;
+    }
+
+    async _handleCrash() {
+        if (!this.isShuttingDown) {
+            console.warn(`[SshUciEngine ${this.label}] SSH connection dropped or process crashed.`);
+        }
+        await super._handleCrash();
     }
 }

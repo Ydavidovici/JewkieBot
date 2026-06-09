@@ -14,7 +14,7 @@ class Search {
 public:
     Search(const Evaluator& evaluator, TranspositionTable& tt);
 
-    Move findBestMove(Board& board, int maxDepth, int timeLeftMs = 0, int incrementMs = 0, int movesToGo = 0, int movetimeMs = 0);
+    Move findBestMove(Board& board, int maxDepth, int timeLeftMs = 0, int incrementMs = 0, int movesToGo = 0);
 
     void setThreadCount(int count);
     int getThreadCount() const { return numThreads_; }

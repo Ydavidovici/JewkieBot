@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 project(chess_engine)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
@@ -85,3 +85,9 @@ target_link_libraries(perf_search PRIVATE core_engine)
 target_link_options(perf_search PRIVATE -static -static-libgcc -static-libstdc++)
 add_test(NAME search_perf COMMAND perf_search)
 set_tests_properties(search_perf PROPERTIES LABELS "performance")
+
+add_executable(perf_eval tests/Performance/eval_performance.cpp)
+target_link_libraries(perf_eval PRIVATE core_engine)
+target_link_options(perf_eval PRIVATE -static -static-libgcc -static-libstdc++)
+add_test(NAME eval_perf COMMAND perf_eval)
+set_tests_properties(eval_perf PROPERTIES LABELS "performance")

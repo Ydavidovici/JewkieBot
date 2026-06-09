@@ -78,11 +78,13 @@ describe("GameAnalyzer", () => {
 
         const analyzer = new GameAnalyzer("fake-path", {dbClient, depth: 20});
         
-        analyzer._getEngine = async () => ({
+        analyzer._manager.reserveEngine = () => ({
+            start: async () => {},
             uciNewGame: async () => {},
             position: async () => {},
             goWithEval: async () => ({ bestMove: "e2e4", scoreCp: 50, isMate: false })
         });
+        analyzer._manager.shutdownEngine = async () => {};
 
         await analyzer.analyzeGame(game.id);
         

@@ -1,6 +1,5 @@
-const BASE_URL = process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess";
-
 async function fetchApi(endpoint, options = {}) {
+    const BASE_URL = process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess";
     const res = await fetch(`${BASE_URL}${endpoint}`, {
         ...options,
         headers: {
@@ -26,6 +25,13 @@ export const dbClient = {
         });
     },
 
+    async createGamesBulk(payloads) {
+        return await fetchApi("/games/bulk", {
+            method: "POST",
+            body: JSON.stringify(payloads),
+        });
+    },
+
     async updateGame(id, payload) {
         return await fetchApi(`/games/${id}`, {
             method: "PATCH",
@@ -37,12 +43,28 @@ export const dbClient = {
         return await fetchApi("/games/unanalyzed");
     },
 
+    async getUnanalyzedGamesByPlayer(playerName) {
+        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}/unanalyzed`);
+    },
+
+    async getGamesByPlayer(playerName) {
+        // Automatically URL-encode the player name (e.g. for spaces or special chars)
+        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}`);
+    },
+
     async getGameMoves(id) {
         return await fetchApi(`/games/${id}/moves`);
     },
 
     async insertGameMoves(id, moves) {
         return await fetchApi(`/games/${id}/moves/bulk`, {
+            method: "POST",
+            body: JSON.stringify(moves),
+        });
+    },
+
+    async insertMovesBulk(moves) {
+        return await fetchApi(`/moves/bulk`, {
             method: "POST",
             body: JSON.stringify(moves),
         });

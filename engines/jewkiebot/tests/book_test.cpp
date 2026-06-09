@@ -122,7 +122,7 @@ static void test_decode_e2e4() {
     // from=e2 (row=1,file=4 -> 12), to=e4 (row=3,file=4 -> 28), no promo
     // raw = (0 << 12) | (1 << 9) | (4 << 6) | (3 << 3) | 4
     uint16_t raw = (1u << 9) | (4u << 6) | (3u << 3) | 4u;
-    Move m = Book::decodeMove(raw, b);
+    Move m = Book::decodeMove(raw, b, b.generateLegalMoves());
     REQUIRE(m.isValid());
     REQUIRE(m.start == 12);
     REQUIRE(m.end == 28);
@@ -138,7 +138,7 @@ static void test_decode_castle_kingside() {
     // Polyglot encodes white short-castle as king-takes-h1-rook: e1->h1.
     // raw = from=e1=4, to=h1=7 -> (0 << 9) | (4 << 6) | (0 << 3) | 7
     uint16_t raw = (0u << 9) | (4u << 6) | (0u << 3) | 7u;
-    Move m = Book::decodeMove(raw, b);
+    Move m = Book::decodeMove(raw, b, b.generateLegalMoves());
     REQUIRE(m.isValid());
     REQUIRE(m.type == MoveType::CASTLE_KINGSIDE);
     REQUIRE(m.start == 4);
@@ -152,7 +152,7 @@ static void test_decode_promotion_queen() {
     Board b = boardFromFEN("4k3/1P6/8/8/8/8/8/4K3 w - - 0 1");
     // from=b7=49 (row=6,file=1), to=b8=57 (row=7,file=1), promo=4 (Q)
     uint16_t raw = (4u << 12) | (6u << 9) | (1u << 6) | (7u << 3) | 1u;
-    Move m = Book::decodeMove(raw, b);
+    Move m = Book::decodeMove(raw, b, b.generateLegalMoves());
     REQUIRE(m.isValid());
     REQUIRE(m.type == MoveType::PROMOTION);
     REQUIRE(m.promo == 'Q');

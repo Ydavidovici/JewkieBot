@@ -9,21 +9,26 @@
         "build:engine": "bun run src/scripts/buildEngine.js",
         "test": "bun test",
         "tourney": "bun run src/scripts/runTourney.js",
+        "selfplay": "bun run src/scripts/selfPlay.js",
+        "download:engines": "bun run src/scripts/downloadEngines.js",
+        "ingest-pgn": "bun run src/scripts/ingestPgn.js",
+        "teacher": "bun run src/scripts/teacherAnalysis.js",
         "setup": "bun run src/scripts/setup_cutie.js",
-        "db:generate": "drizzle-kit generate",
-        "db:migrate": "bun run src/scripts/migrate.js",
         "download:book": "bun run src/scripts/downloadBook.js",
         "download:book:gm2001": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/gm2001.bin",
         "download:book:titans": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/Titans.bin",
         "download:book:human": "bun run src/scripts/downloadBook.js https://github.com/gmcheems-org/free-opening-books/raw/main/books/bin/Human.bin",
-        "download:book:cerebellum": "bun run src/scripts/downloadCerebellum.js"
+        "download:book:cerebellum": "bun run src/scripts/downloadCerebellum.js",
+        "generate-data": "bun run src/scripts/generate_dataset.ts"
     },
     "devDependencies": {
         "@types/bun": "latest"
     },
     "dependencies": {
+        "chess.js": "^1.4.0",
         "cors": "^2.8.6",
         "discord.js": "^14.26.4",
+        "dotenv": "^17.4.2",
         "express": "^5.1.0"
     }
 }

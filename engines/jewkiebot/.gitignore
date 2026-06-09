@@ -1,3 +1,9 @@
 build
 tests/performance/results
 .claude
+/engines/stockfish.zip
+../stockfish.zip
+/engines/stockfish/
+/tools/cutechess*/
+/tools/*.epd
+/tools/*.zip
