@@ -54,6 +54,13 @@ export const dbClient = {
         });
     },
 
+    async insertMovesBulk(moves) {
+        return await fetchApi(`/moves/bulk`, {
+            method: "POST",
+            body: JSON.stringify(moves),
+        });
+    },
+
     async insertMoveEvals(id, evals) {
         return await fetchApi(`/games/${id}/evals/bulk`, {
             method: "POST",

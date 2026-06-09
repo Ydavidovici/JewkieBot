@@ -95,19 +95,10 @@ export class PgnManager {
         // We can optimize the moves insert as well if dbClient supports it
         if (allMovesPayload.length > 0) {
             console.log(`Sending bulk create request for ${allMovesPayload.length} total moves...`);
-            // Wait, we need a global bulk move insertion. dbClient.insertMovesBulk.
-            // Let's implement that or chunk it by games. The current insertGameMoves in db-service accepts array of moves for ONE game.
-            // But wait, the route is `/games/:id/moves/bulk`.
-            // Let's iterate and call insertGameMoves for each game in parallel chunks!
-            const chunkSize = 50;
-            for (let i = 0; i < createdGames.length; i += chunkSize) {
-                const chunk = createdGames.slice(i, i + chunkSize);
-                await Promise.all(chunk.map(async (cg) => {
-                    const gameMoves = allMovesPayload.filter(m => m.game_id === cg.id);
-                    if (gameMoves.length > 0) {
-                        await this.dbClient.insertGameMoves(cg.id, gameMoves);
-                    }
-                }));
+            const chunkSize = 2000; // Safe chunk size for bulk inserts (prevents payload from being too huge)
+            for (let i = 0; i < allMovesPayload.length; i += chunkSize) {
+                const chunk = allMovesPayload.slice(i, i + chunkSize);
+                await this.dbClient.insertMovesBulk(chunk);
             }
         }
 
