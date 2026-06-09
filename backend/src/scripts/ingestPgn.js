@@ -24,6 +24,18 @@ async function parseAndIngestPgn(filePath) {
 }
 
 async function main() {
+    const fileArg = process.argv[2];
+    
+    if (fileArg) {
+        const fullPath = path.resolve(fileArg);
+        if (!fsSync.existsSync(fullPath)) {
+            console.error(`File not found: ${fullPath}`);
+            process.exit(1);
+        }
+        await parseAndIngestPgn(fullPath);
+        return;
+    }
+
     console.log("Checking storage directory for PGN files...");
     if (!fsSync.existsSync(STORAGE_DIR)) {
         console.log("Storage directory not found. No games to ingest.");
