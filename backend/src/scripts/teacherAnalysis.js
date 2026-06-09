@@ -18,7 +18,8 @@ async function main() {
     // GameAnalyzer uses EngineManager internally. If REMOTE_ENGINE_ENABLED is true,
     // the engines will run on the olddesktop via SSH.
     const analyzer = new GameAnalyzer(STOCKFISH_PATH, {
-        depth: 20,       // Deep analysis to act as a proper teacher
+        depth: process.env.ANALYSIS_DEPTH ? parseInt(process.env.ANALYSIS_DEPTH, 10) : 20,
+        moveTimeMs: process.env.ANALYSIS_MOVETIME ? parseInt(process.env.ANALYSIS_MOVETIME, 10) : null,
         concurrency: 4,   // Can process 4 games in parallel
         studentPath: process.env.STUDENT_ENGINE_PATH || null,
     });
