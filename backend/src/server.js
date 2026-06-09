@@ -109,6 +109,52 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    app.get("/api/engine/stream", async (req, res) => {
+        try {
+            const fen = req.query.fen || "startpos";
+            const depth = req.query.depth || 20;
+
+            res.setHeader("Content-Type", "text/event-stream");
+            res.setHeader("Cache-Control", "no-cache");
+            res.setHeader("Connection", "keep-alive");
+            res.flushHeaders();
+
+            const streamId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const jewkiebot = manager.reserveEngine(`${streamId}-jb`, mainEnginePath);
+            const stockfish = analyzer ? manager.reserveEngine(`${streamId}-sf`, analyzer.stockfishPath) : null;
+
+            const cleanup = async () => {
+                await manager.shutdownEngine(`${streamId}-jb`).catch(() => {});
+                if (stockfish) await manager.shutdownEngine(`${streamId}-sf`).catch(() => {});
+            };
+
+            req.on("close", cleanup);
+
+            const forwardLine = (engineName) => (line) => {
+                if (line.startsWith("info depth") || line.startsWith("bestmove")) {
+                    res.write(`data: ${JSON.stringify({engine: engineName, line})}\n\n`);
+                }
+            };
+
+            await jewkiebot.start();
+            jewkiebot.on("line", forwardLine("jewkiebot"));
+            await jewkiebot.position(fen);
+            jewkiebot._sendRaw(`go depth ${depth}`);
+
+            if (stockfish) {
+                await stockfish.start();
+                stockfish.on("line", forwardLine("stockfish"));
+                await stockfish.position(fen);
+                stockfish._sendRaw(`go depth ${depth}`);
+            }
+
+        } catch (err) {
+            console.error("Stream error:", err);
+            res.write(`event: error\ndata: ${err.message}\n\n`);
+            res.end();
+        }
+    });
+
     app.post("/api/engine/cancel", async (req, res) => {
         try {
             await manager.shutdownEngine("Main");
@@ -361,7 +407,10 @@ if (import.meta.main) {
         });
     };
 
-    const STOCKFISH_PATH = path.resolve(import.meta.dir, "../../engines/stockfish/stockfish/stockfish-windows-x86-64-avx2.exe");
+    const isWindows = process.platform === "win32";
+    const defaultStockfishName = isWindows ? "stockfish.exe" : "stockfish";
+    const defaultStockfishPath = path.resolve(import.meta.dir, `../../engines/stockfish/${defaultStockfishName}`);
+    const STOCKFISH_PATH = process.env.STOCKFISH_PATH || defaultStockfishPath;
     const stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
     const analyzer = stockfishExists
         ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20})

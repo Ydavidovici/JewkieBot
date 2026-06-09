@@ -6,13 +6,21 @@ const BotContext = createContext(null);
 const URLS = {
     'prod': 'https://jewkiebot.dev',
     'dev': 'https://jewkiebot.dev/dev',
+    'local': 'http://localhost:8000',
+};
+
+const DB_URLS = {
+    'prod': 'https://jewkiebot.dev', // Assuming db-service is accessible here
+    'dev': 'https://jewkiebot.dev/dev',
+    'local': 'http://192.168.1.51:4001',
 };
 
 export const BotProvider = ({ children }) => {
-    // Determine the active target: 'prod' or 'dev'
-    const [botTarget, setBotTarget] = useState("prod");
+    // Determine the active target: 'prod', 'dev', or 'local'
+    const [botTarget, setBotTarget] = useState("local");
     
     const activeUrl = URLS[botTarget];
+    const activeDbUrl = DB_URLS[botTarget];
 
     // Store status objects for both environments
     const [statuses, setStatuses] = useState({
@@ -23,6 +31,12 @@ export const BotProvider = ({ children }) => {
             lastChecked: null
         },
         dev: {
+            health: null,
+            lichess: null,
+            error: null,
+            lastChecked: null
+        },
+        local: {
             health: null,
             lichess: null,
             error: null,
@@ -65,6 +79,7 @@ export const BotProvider = ({ children }) => {
         const poll = () => {
             fetchStatusForTarget("prod", URLS.prod);
             fetchStatusForTarget("dev", URLS.dev);
+            fetchStatusForTarget("local", URLS.local);
         };
 
         poll(); // Trigger initial fetch
@@ -78,6 +93,7 @@ export const BotProvider = ({ children }) => {
         setBotTarget,
         urls: URLS,
         activeUrl,
+        activeDbUrl,
         statuses,
         activeStatus: statuses[botTarget],
         refreshActive: () => fetchStatusForTarget(botTarget, activeUrl)

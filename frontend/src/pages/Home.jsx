@@ -24,7 +24,6 @@ export default function Home() {
 
     const cmdHealth = () => executeCommand("health", () => health(activeUrl));
     const cmdStatus = () => executeCommand("status", () => getLichessStatus(activeUrl));
-    const cmdAnalysis = () => executeCommand("analysis", () => analyze("startpos", 10, activeUrl));
     const cmdBench = () => executeCommand("bench", () => runBenchmark({ mode: "depth", depth: 7 }, activeUrl));
 
     const handleLichessToggle = async () => {
@@ -99,9 +98,6 @@ export default function Home() {
                     </button>
                     <button onClick={cmdStatus} disabled={loadingCommand} className="flex items-center justify-center gap-3 py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl border border-slate-700 transition-colors font-semibold shadow-sm">
                         <Server size={18} className="text-blue-400" /> /status
-                    </button>
-                    <button onClick={cmdAnalysis} disabled={loadingCommand} className="flex items-center justify-center gap-3 py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl border border-slate-700 transition-colors font-semibold shadow-sm">
-                        <Search size={18} className="text-purple-400" /> /analysis
                     </button>
                     <button onClick={cmdBench} disabled={loadingCommand} className="flex items-center justify-center gap-3 py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl border border-slate-700 transition-colors font-semibold shadow-sm">
                         <Zap size={18} className="text-yellow-400" /> /bench

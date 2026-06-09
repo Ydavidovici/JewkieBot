@@ -1,7 +1,7 @@
 import React from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { useBot } from "../context/BotContext.jsx";
-import { LayoutDashboard, Gamepad2, Settings, Activity } from "lucide-react";
+import { LayoutDashboard, Gamepad2, Settings, Activity, LineChart } from "lucide-react";
 
 export default function Default() {
     const { botTarget, setBotTarget, statuses } = useBot();
@@ -41,6 +41,13 @@ export default function Default() {
                             <span className="text-sm font-medium">Development Bot</span>
                             {renderStatusIndicator("dev")}
                         </button>
+                        <button 
+                            onClick={() => setBotTarget("local")}
+                            className={`flex items-center justify-between px-3 py-2 rounded-md transition-all duration-200 ${botTarget === "local" ? "bg-green-600/20 border border-green-500/50 text-green-100 shadow-inner" : "hover:bg-slate-800 text-slate-400 border border-transparent"}`}
+                        >
+                            <span className="text-sm font-medium">Local Environment</span>
+                            {renderStatusIndicator("local")}
+                        </button>
                     </div>
                 </div>
 
@@ -49,6 +56,9 @@ export default function Default() {
                     
                     <NavLink to="/" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
                         <LayoutDashboard size={18} /> Dashboard
+                    </NavLink>
+                    <NavLink to="/analysis" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
+                        <LineChart size={18} /> Game Analysis
                     </NavLink>
                     <NavLink to="/game" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
                         <Gamepad2 size={18} /> Play vs Engine

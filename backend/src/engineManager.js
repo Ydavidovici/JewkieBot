@@ -281,7 +281,10 @@ export class UciEngine extends EventEmitter {
                     const line = buffer.slice(0, idx).trim();
                     buffer = buffer.slice(idx + 1);
 
-                    if (!line || this.queue.length === 0) continue;
+                    if (!line) continue;
+                    this.emit("line", line);
+
+                    if (this.queue.length === 0) continue;
 
                     const currentTask = this.queue[0];
                     if (currentTask.callback) currentTask.callback(line);
