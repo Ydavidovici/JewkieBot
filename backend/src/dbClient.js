@@ -26,6 +26,13 @@ export const dbClient = {
         });
     },
 
+    async createGamesBulk(payloads) {
+        return await fetchApi("/games/bulk", {
+            method: "POST",
+            body: JSON.stringify(payloads),
+        });
+    },
+
     async updateGame(id, payload) {
         return await fetchApi(`/games/${id}`, {
             method: "PATCH",

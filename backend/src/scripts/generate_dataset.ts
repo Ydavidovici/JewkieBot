@@ -41,46 +41,12 @@ if (!fs.existsSync(pgnFile)) {
 }
 
 const pgnText = fs.readFileSync(pgnFile, 'utf-8');
-const games = pgnText.split('[Event ').filter(g => g.trim().length > 0).map(g => '[Event ' + g);
+const pgnManager = new (require('../pgnManager.js').PgnManager)();
+const result = pgnManager.parsePgnToEpd(pgnText);
 
-let epdLines: string[] = [];
-let gameCount = 0;
-let positionCount = 0;
-
-for (const pgn of games) {
-    const chess = new Chess();
-    try {
-        chess.loadPgn(pgn);
-    } catch(err) {
-        continue; // Skip invalid games
-    }
-
-    let resultHeader = chess.header().Result;
-    let resultLabel = "0.5";
-    if (resultHeader === "1-0") resultLabel = "1.0";
-    if (resultHeader === "0-1") resultLabel = "0.0";
-    
-    // Discard aborted or unknown games
-    if (resultHeader === "*" || !resultHeader) continue;
-
-    const history = chess.history();
-    const startFen = chess.header().FEN || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    const tempChess = new Chess(startFen);
-    
-    for (let i = 0; i < history.length; i++) {
-        tempChess.move(history[i]);
-        // Skip opening phase (first 12 plies = 6 full moves)
-        if (i > 11) {
-            // Optional: skip positions in check
-            if (!tempChess.inCheck()) {
-                const fen = tempChess.fen();
-                epdLines.push(`${fen} c9 "${resultLabel}"`);
-                positionCount++;
-            }
-        }
-    }
-    gameCount++;
-}
+const epdLines = result.epdLines;
+const positionCount = result.positionCount;
+const gameCount = result.gameCount;
 
 // 3. Save EPD
 console.log(`\n[3/3] Saving ${positionCount} positions from ${gameCount} games to tuning_dataset.epd...`);

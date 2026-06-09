@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dbClient } from "../dbClient.js";
-import { PgnGenerator } from "../pgnGenerator.js";
+import { PgnManager } from "../pgnManager.js";
 import * as dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -12,15 +12,15 @@ dotenv.config({ path: path.join(__dirname, "..", "..", ".env") });
 const STORAGE_DIR = path.join(__dirname, "..", "..", "storage");
 
 async function parseAndIngestPgn(filePath) {
-    console.log(`\n📄 Ingesting ${path.basename(filePath)}...`);
-    const content = await fs.readFile(filePath, "utf-8");
-    
-    const generator = new PgnGenerator(dbClient);
-    const result = await generator.ingestPgnString(content);
-    
-    console.log(`\n✅ Finished ingesting games from ${path.basename(filePath)}`);
-    console.log(`Success: ${result.success}`);
-    console.log(`Failed: ${result.failed}`);
+    try {
+        console.log(`Ingesting ${filePath}...`);
+        const manager = new PgnManager(dbClient);
+        const result = await manager.ingestPgnFile(filePath);
+        
+        console.log(`✅ Completed ${filePath}: ${result.success} saved, ${result.failed} failed.`);
+    } catch (err) {
+        console.error(`❌ Error ingesting ${filePath}:`, err);
+    }
 }
 
 async function main() {

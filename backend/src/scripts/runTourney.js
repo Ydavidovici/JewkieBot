@@ -1,15 +1,15 @@
-import { CutechessManager } from "../cutechessManager.js";
+import {CutechessManager} from "../cutechessManager.js";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import {fileURLToPath} from "node:url";
 import fs from "node:fs";
-import { parseArgs } from "node:util";
+import {parseArgs} from "node:util";
 import * as dotenv from "dotenv";
-import { DbClient } from "../dbClient.js";
-import { PgnGenerator } from "../pgnGenerator.js";
+import {dbClient} from "../dbClient.js";
+import {PgnManager} from "../pgnManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, "..", "..", "..", ".env") });
+dotenv.config({path: path.join(__dirname, "..", "..", "..", ".env")});
 
 const TOOLS_DIR = path.join(__dirname, "../../../tools");
 const ENGINES_DIR = path.join(__dirname, "../../../engines");
@@ -21,28 +21,28 @@ const CUTECHESS = process.platform === "win32"
 const BOOK_PATH = path.join(TOOLS_DIR, "UHO_4060_v1.epd");
 
 const options = {
-    games: { type: "string", default: "200" },
-    tc: { type: "string", default: "10+0.1" },
-    concurrency: { type: "string", default: "2" },
-    preset: { type: "string", default: "diverse" }
+    games: {type: "string", default: "200"},
+    tc: {type: "string", default: "10+0.1"},
+    concurrency: {type: "string", default: "2"},
+    preset: {type: "string", default: "diverse"},
 };
-const { values } = parseArgs({ options, args: process.argv.slice(2) });
+const {values} = parseArgs({options, args: process.argv.slice(2)});
 
 const STOCKFISH_ENGINES = [
-    { name: "SF-Depth2", exe: "stockfish/stockfish", depth: 2 },
-    { name: "SF-Depth3", exe: "stockfish/stockfish", depth: 3 },
-    { name: "SF-Depth4", exe: "stockfish/stockfish", depth: 4 },
-    { name: "SF-Depth5", exe: "stockfish/stockfish", depth: 5 },
-    { name: "SF-Depth6", exe: "stockfish/stockfish", depth: 6 },
-    { name: "SF-Depth7", exe: "stockfish/stockfish", depth: 7 },
-    { name: "SF-Depth8", exe: "stockfish/stockfish", depth: 8 },
+    {name: "SF-Depth2", exe: "stockfish/stockfish", depth: 2},
+    {name: "SF-Depth3", exe: "stockfish/stockfish", depth: 3},
+    {name: "SF-Depth4", exe: "stockfish/stockfish", depth: 4},
+    {name: "SF-Depth5", exe: "stockfish/stockfish", depth: 5},
+    {name: "SF-Depth6", exe: "stockfish/stockfish", depth: 6},
+    {name: "SF-Depth7", exe: "stockfish/stockfish", depth: 7},
+    {name: "SF-Depth8", exe: "stockfish/stockfish", depth: 8},
 ];
 
 const HUMAN_ENGINES = [
-    { name: "Ethereal", exe: "/usr/games/ethereal", depth: 4 },
-    { name: "Fruit", exe: "/usr/games/fruit", depth: 4 },
-    { name: "Toga2", exe: "/usr/games/toga2", depth: 4 },
-    { name: "Glaurung", exe: "/usr/games/glaurung", depth: 4 },
+    {name: "Ethereal", exe: "/usr/games/ethereal", depth: 4},
+    {name: "Fruit", exe: "/usr/games/fruit", depth: 4},
+    {name: "Toga2", exe: "/usr/games/toga2", depth: 4},
+    {name: "Glaurung", exe: "/usr/games/glaurung", depth: 4},
 ];
 
 class TourneyManager extends CutechessManager {
@@ -52,12 +52,12 @@ class TourneyManager extends CutechessManager {
 
     async runGauntletTournament() {
         if (!fs.existsSync(STORAGE_DIR)) {
-            fs.mkdirSync(STORAGE_DIR, { recursive: true });
+            fs.mkdirSync(STORAGE_DIR, {recursive: true});
             console.log(`📁 Created new storage directory at: ${STORAGE_DIR}`);
         }
 
         const now = new Date();
-        const pad = (n) => n.toString().padStart(2, '0');
+        const pad = (n) => n.toString().padStart(2, "0");
         const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
         const pgnFilename = path.join(STORAGE_DIR, `tournament_${timestamp}.pgn`);
 
@@ -69,12 +69,12 @@ class TourneyManager extends CutechessManager {
                 user: process.env.REMOTE_SSH_USER, // Optional
                 host: process.env.REMOTE_SSH_HOST,
                 keyPath: process.env.REMOTE_SSH_KEY_PATH, // Optional
-                stockfishPath: remotePath // this is just the executable path on the remote machine
+                stockfishPath: remotePath, // this is just the executable path on the remote machine
             } : null;
         };
 
-        const myEngineRemotePath = isRemote && process.env.REMOTE_MY_ENGINE_PATH 
-            ? process.env.REMOTE_MY_ENGINE_PATH 
+        const myEngineRemotePath = isRemote && process.env.REMOTE_MY_ENGINE_PATH
+            ? process.env.REMOTE_MY_ENGINE_PATH
             : path.join(baseRemoteDir, "jewkiebot", "build", "jewkiebot.exe");
 
         const myEngineLocalPath = process.platform === "win32" ? path.join(ENGINES_DIR, "jewkiebot", "build", "jewkiebot.exe") : path.join(ENGINES_DIR, "jewkiebot", "build", "jewkiebot");
@@ -82,12 +82,12 @@ class TourneyManager extends CutechessManager {
             name: "JewkieBot",
             path: isRemote ? myEngineRemotePath : myEngineLocalPath,
             sshConfig: getSshConfig(myEngineRemotePath),
-            args: []
+            args: [],
         };
 
         const opponents = [];
         const selectedEngines = values.preset === "stockfish" ? STOCKFISH_ENGINES : HUMAN_ENGINES;
-        
+
         console.log(`Loading ${selectedEngines.length} opponents for preset: ${values.preset}...`);
         for (const eng of selectedEngines) {
             let activePath = eng.exe;
@@ -98,7 +98,7 @@ class TourneyManager extends CutechessManager {
             const isGlobalBinary = activePath.startsWith("/usr/");
             const localPath = isGlobalBinary ? activePath : path.join(ENGINES_DIR, activePath);
             let remotePath = isGlobalBinary ? activePath : path.join(baseRemoteDir, activePath);
-            
+
             const finalPath = isRemote ? remotePath : localPath;
 
             if (!isRemote && !fs.existsSync(localPath)) {
@@ -108,7 +108,7 @@ class TourneyManager extends CutechessManager {
                     name: eng.name,
                     path: finalPath,
                     sshConfig: getSshConfig(finalPath),
-                    args: [`depth=${eng.depth}`]
+                    args: [`depth=${eng.depth}`],
                 });
             }
         }
@@ -127,7 +127,7 @@ class TourneyManager extends CutechessManager {
             rounds,
             concurrency: parseInt(values.concurrency, 10),
             pgnOut: pgnFilename,
-            openingBook: { file: BOOK_PATH, format: "epd" }
+            openingBook: {file: BOOK_PATH, format: "epd"},
         });
     }
 }
@@ -136,15 +136,14 @@ async function main() {
     const manager = new TourneyManager();
     try {
         const pgnOut = await manager.runGauntletTournament();
-        
+
         console.log(`\n💾 Tournament complete. Ingesting games into Database...`);
-        const dbClient = new DbClient();
-        const pgnGen = new PgnGenerator(dbClient);
+        const pgnManager = new PgnManager(dbClient);
         const pgnContent = fs.readFileSync(pgnOut, "utf-8");
-        
-        const results = await pgnGen.ingestPgnString(pgnContent);
+
+        const results = await pgnManager.ingestPgnString(pgnContent);
         console.log(`✅ Database Ingestion Complete: ${results.success} games saved, ${results.failed} failed.`);
-        
+
     } catch (e) {
         console.error("\n❌ Fatal Error during tournament:", e);
     }
