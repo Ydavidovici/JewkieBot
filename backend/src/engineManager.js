@@ -121,6 +121,65 @@ export class UciEngine extends EventEmitter {
         }
     }
 
+    async goWithEval(options = {}) {
+        await this.ensureReady();
+
+        const parts = ["go"];
+        if (options.depth)    parts.push(`depth ${options.depth}`);
+        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
+
+        if (options.moveTime) {
+            parts.push(`movetime ${options.moveTime}`);
+        } else {
+            if (options.whiteTime) parts.push(`wtime ${options.whiteTime}`);
+            if (options.blackTime) parts.push(`btime ${options.blackTime}`);
+            if (options.whiteInc  != null) parts.push(`winc ${options.whiteInc}`);
+            if (options.blackInc  != null) parts.push(`binc ${options.blackInc}`);
+        }
+
+        let safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
+        let currentBestMove = "(none)";
+        let scoreCp = null;
+        let isMate = false;
+
+        try {
+            const response = await this._sendCommand(
+                parts.join(" "),
+                (line) => line.startsWith("bestmove"),
+                (line) => {
+                    if (line.startsWith("info")) {
+                        if (line.includes(" score cp ")) {
+                            const match = line.match(/score cp (-?\d+)/);
+                            if (match) {
+                                scoreCp = parseInt(match[1], 10);
+                                isMate = false;
+                            }
+                        } else if (line.includes(" score mate ")) {
+                            const match = line.match(/score mate (-?\d+)/);
+                            if (match) {
+                                scoreCp = parseInt(match[1], 10) > 0 ? 10000 : -10000;
+                                isMate = true;
+                            }
+                        }
+                        if (line.includes(" pv ")) {
+                            const moves = line.split(" pv ")[1]?.split(" ");
+                            if (moves && moves[0]) currentBestMove = moves[0];
+                        }
+                    }
+                },
+                safeTimeout,
+            );
+            return {
+                bestMove: response.split(" ")[1] || currentBestMove,
+                scoreCp,
+                isMate
+            };
+        } catch (e) {
+            console.error("[Engine] Error during 'goWithEval':", e);
+            return { bestMove: currentBestMove !== "(none)" ? currentBestMove : "0000", scoreCp: null, isMate: false };
+        }
+    }
+
     // stop shuts down an engine
     async stop() {
         this.isShuttingDown = true;
