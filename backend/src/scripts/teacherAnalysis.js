@@ -7,8 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({path: path.join(__dirname, "..", "..", ".env")});
 
 const isWindows = process.platform === "win32";
-const defaultStockfishName = isWindows ? "stockfish.exe" : "stockfish";
-const defaultStockfishPath = path.join(__dirname, "..", "..", "..", "engines", "stockfish", defaultStockfishName);
+const defaultStockfishName = isWindows ? "stockfish-windows-x86-64-avx2.exe" : "stockfish";
+const defaultStockfishPath = path.join(__dirname, "..", "..", "..", "engines", "stockfish", isWindows ? "stockfish" : "", defaultStockfishName);
 
 // Local fallback, but EngineManager will use SSH if process.env.REMOTE_ENGINE_ENABLED = true
 const STOCKFISH_PATH = process.env.STOCKFISH_PATH || defaultStockfishPath;
