@@ -48,6 +48,7 @@ export class PgnManager {
                     env: "local",
                     source: "pgn_ingest",
                     result: headers.Result || "*",
+                    termination: headers.Termination || null,
                     timeControl: headers.TimeControl || null,
                     started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString()
                 });
