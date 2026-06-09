@@ -45,11 +45,16 @@ async function processDirectory(dirPath) {
         const success = await parseAndIngestPgn(fullFilePath);
         
         if (success) {
-            const ingestedDir = path.join(dirPath, "ingested");
-            if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
-            
-            await fs.rename(fullFilePath, path.join(ingestedDir, file));
-            console.log(`Moved ${file} to ${ingestedDir}/`);
+            const parentDir = dirPath;
+            if (path.basename(parentDir) !== "ingested") {
+                const ingestedDir = path.join(parentDir, "ingested");
+                if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+                
+                await fs.rename(fullFilePath, path.join(ingestedDir, file));
+                console.log(`Moved ${file} to ${ingestedDir}/`);
+            } else {
+                console.log(`File ${file} is already in the ingested/ folder.`);
+            }
         }
     }
 
@@ -73,11 +78,15 @@ async function main() {
             const success = await parseAndIngestPgn(fullPath);
             if (success) {
                 const parentDir = path.dirname(fullPath);
-                const ingestedDir = path.join(parentDir, "ingested");
-                if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
-                const fileName = path.basename(fullPath);
-                await fs.rename(fullPath, path.join(ingestedDir, fileName));
-                console.log(`Moved ${fileName} to ${ingestedDir}/`);
+                if (path.basename(parentDir) !== "ingested") {
+                    const ingestedDir = path.join(parentDir, "ingested");
+                    if (!fsSync.existsSync(ingestedDir)) fsSync.mkdirSync(ingestedDir);
+                    const fileName = path.basename(fullPath);
+                    await fs.rename(fullPath, path.join(ingestedDir, fileName));
+                    console.log(`Moved ${fileName} to ${ingestedDir}/`);
+                } else {
+                    console.log(`File is already in the ingested/ folder.`);
+                }
             }
         }
         return;
