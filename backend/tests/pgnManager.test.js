@@ -28,13 +28,13 @@ describe("PgnManager", () => {
 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 1/2-1/2`;
 
             // Mock DB Client
-            const createGameMock = mock(() => Promise.resolve({ id: 101 }));
-            const insertGameMovesMock = mock(() => Promise.resolve());
+            const createGamesBulkMock = mock((payload) => Promise.resolve(payload.map(p => ({...p, id: 101}))));
+            const insertMovesBulkMock = mock(() => Promise.resolve());
             
             const mockedDbClient = {
                 ...dbClient,
-                createGame: createGameMock,
-                insertGameMoves: insertGameMovesMock
+                createGamesBulk: createGamesBulkMock,
+                insertMovesBulk: insertMovesBulkMock
             };
 
             const generator = new PgnManager(mockedDbClient);
@@ -43,16 +43,17 @@ describe("PgnManager", () => {
             expect(result.success).toBe(1);
             expect(result.failed).toBe(0);
 
-            // Verify createGame was called with correct metadata
-            expect(createGameMock).toHaveBeenCalledTimes(1);
-            const gamePayload = createGameMock.mock.calls[0][0];
-            expect(gamePayload.whiteUsername).toBe("Carlsen,M");
-            expect(gamePayload.blackUsername).toBe("Bu Xiangzhi");
-            expect(gamePayload.result).toBe("1/2-1/2");
+            // Verify createGamesBulk was called with correct metadata
+            expect(createGamesBulkMock).toHaveBeenCalledTimes(1);
+            const gamesPayload = createGamesBulkMock.mock.calls[0][0];
+            expect(gamesPayload.length).toBe(1);
+            expect(gamesPayload[0].whiteUsername).toBe("Carlsen,M");
+            expect(gamesPayload[0].blackUsername).toBe("Bu Xiangzhi");
+            expect(gamesPayload[0].result).toBe("1/2-1/2");
 
-            // Verify insertGameMoves was called with correct moves
-            expect(insertGameMovesMock).toHaveBeenCalledTimes(1);
-            const movesPayload = insertGameMovesMock.mock.calls[0][1];
+            // Verify insertMovesBulk was called with correct moves
+            expect(insertMovesBulkMock).toHaveBeenCalledTimes(1);
+            const movesPayload = insertMovesBulkMock.mock.calls[0][0];
             expect(movesPayload.length).toBe(6); // 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6
             expect(movesPayload[0].uci).toBe("e2e4");
             expect(movesPayload[0].ply).toBe(1);
