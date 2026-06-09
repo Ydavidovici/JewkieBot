@@ -95,7 +95,7 @@ export class PgnManager {
         // We can optimize the moves insert as well if dbClient supports it
         if (allMovesPayload.length > 0) {
             console.log(`Sending bulk create request for ${allMovesPayload.length} total moves...`);
-            const chunkSize = 2000; // Safe chunk size for bulk inserts (prevents payload from being too huge)
+            const chunkSize = 500; // Small enough to bypass Express's default 100kb JSON body limit
             for (let i = 0; i < allMovesPayload.length; i += chunkSize) {
                 const chunk = allMovesPayload.slice(i, i + chunkSize);
                 await this.dbClient.insertMovesBulk(chunk);
