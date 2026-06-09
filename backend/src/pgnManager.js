@@ -68,7 +68,7 @@ export class PgnManager {
         let failed = 0;
 
         for (const cg of createdGames) {
-            const bulkIndex = (cg as any)._bulkIndex;
+            const bulkIndex = cg._bulkIndex;
             const parsed = parsedGames.find(p => p.index === bulkIndex);
             if (!parsed || !cg.id) {
                 failed++;
