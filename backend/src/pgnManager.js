@@ -58,6 +58,8 @@ export class PgnManager {
                     termination: headers.Termination || null,
                     timeControl: headers.TimeControl || null,
                     started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString(),
+                    openingEco: headers.ECO || null,
+                    openingName: headers.Opening || null,
                 });
 
                 parsedGames.push({index: i, history: chess.history({verbose: true}), startFen: headers.FEN});
