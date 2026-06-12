@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import { Chess } from 'chess.js';
 import * as path from 'path';
 
+// FIXME: this should use self-play and not be a .ts file
+
 console.log("Generating dataset for Texel Tuning...");
 
 // 1. Play Games
