@@ -94,6 +94,7 @@ export class LichessBot {
         const blackString = blackOpeningId ? `${whiteString ? ", " : ""}black=${blackOpeningId}` : "";
         const optionsString = whiteString || blackString ? `, ${whiteString}${blackString}` : "";
 
+        // FIXME: we should use notifier, not console.log
         console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optionsString})`);
         this._tickAutoplay();
     }
@@ -242,6 +243,7 @@ export class LichessBot {
     }
 
     async start() {
+        // FIXME: we should use notifier, not console.log
         console.log("[Bot] Starting...");
         await this._loadRateLimitState().catch(() => {});
 
@@ -555,6 +557,7 @@ export class LichessBot {
      * @returns {Promise<boolean>} Success of the move
      */
     async makeMove(engine, gameId, initialFen, movesStr, myColor, timeInfo, totalTimeMs) {
+        // FIXME: we should use notifier, not console.log
         console.log(`[${gameId}] My turn (${myColor}).`);
 
         const movesArray = movesStr.trim() === "" ? [] : movesStr.trim().split(" ");
@@ -574,6 +577,7 @@ export class LichessBot {
                 }
             }
             this.gameOpenings.set(gameId, currentOpeningId);
+            // FIXME: we should use notifier, not console.log
             console.log(`[${gameId}] Selected opening: ${currentOpeningId} for ${myColor}`);
         }
 
@@ -1094,6 +1098,7 @@ export class LichessBot {
         this.lastChallengeTime = this._now();
     }
 
+    // FIXME: refactor for apiTransport
     async _lichessFetch(url, options = {}) {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
