@@ -2287,14 +2287,8 @@ describe("huntNearRating — auto-widen window", () => {
     });
 
     it("does NOT widen past maxWindow even if pool stays empty after multiple doublings", async () => {
-        // Track windows tried via console.log spying.
+        // Track windows tried via notifier.info spying.
         const widenLogs = [];
-        const origLog = console.log;
-        console.log = (...args) => {
-            const line = args.join(" ");
-            if (line.includes("widening to")) widenLogs.push(line);
-            origLog(...args);
-        };
         try {
             global.fetch = mock(async (url) => {
                 if (url.includes("/api/account")) return { ok: true, json: async () => ({ perfs: { blitz: { rating: 1800 } } }) };
@@ -2302,12 +2296,17 @@ describe("huntNearRating — auto-widen window", () => {
                 return { ok: false };
             });
             const b = makeBot();
+            const origInfo = b.notifier.info.bind(b.notifier);
+            b.notifier.info = (...args) => {
+                const line = args.join(" ");
+                if (line.includes("widening to")) widenLogs.push(line);
+                origInfo(...args);
+            };
             await expect(b.huntNearRating(180, 2, true, { window: 200, maxWindow: 1600 })).rejects.toThrow();
             // 200 → 400 → 800 → 1600 (cap). Three widen messages.
             expect(widenLogs.length).toBe(3);
             expect(widenLogs[widenLogs.length - 1]).toContain("±1600");
         } finally {
-            console.log = origLog;
         }
     });
 });

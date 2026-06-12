@@ -30,7 +30,7 @@ describe("WebhookTransport", () => {
         await t.send({level: "info", subject: "anything"});
     });
 
-    test("posts info logs to the 'logs' channel with no status field", async () => {
+    test("posts info logs to the 'notifications' channel with status=success", async () => {
         const t = new WebhookTransport({url: "http://test/notify", token: "tk", project: "proj"});
         t.api.post = mock(async () => ({}));
 
@@ -43,32 +43,21 @@ describe("WebhookTransport", () => {
         expect(t.api.post).toHaveBeenCalled();
         const payload = t.api.post.mock.calls[0][1];
         
-        expect(payload.channel).toBe("logs");
-        expect(payload.status).toBeUndefined();
+        expect(payload.channel).toBe("notifications");
+        expect(payload.status).toBe("success");
         expect(payload.project).toBe("proj");
         expect(payload.message).toContain("[ INFO ] [Server] Started");
         expect(payload.message).toContain(`"port": 8000`);
     });
 
-    test("routes autoplay restart events to 'notifications' with status=success", async () => {
-        const t = new WebhookTransport({url: "http://test/notify", token: "tk"});
-        t.api.post = mock(async () => ({}));
-
-        await t.send({level: "info", subject: "[Autoplay] Autoplay restarted after rate limit"});
-
-        const payload = t.api.post.mock.calls[0][1];
-        expect(payload.channel).toBe("notifications");
-        expect(payload.status).toBe("success");
-    });
-
-    test("error/fatal levels set status=error and stay on the 'logs' channel", async () => {
+    test("error/fatal levels set status=error and use the 'notifications' channel", async () => {
         const t = new WebhookTransport({url: "http://test/notify", token: "tk"});
         t.api.post = mock(async () => ({}));
 
         await t.send({level: "error", subject: "[EngineManager] Engine crashed"});
 
         const payload = t.api.post.mock.calls[0][1];
-        expect(payload.channel).toBe("logs");
+        expect(payload.channel).toBe("notifications");
         expect(payload.status).toBe("error");
     });
 

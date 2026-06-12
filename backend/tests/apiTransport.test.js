@@ -121,4 +121,46 @@ describe("ApiTransport", () => {
         
         expect(api.get("http://test.com/404")).rejects.toThrow("HTTP 404: Not Found");
     });
+    test("does not stringify URLSearchParams and does not set Content-Type to JSON", async () => {
+        const fetchMock = mock(async () => ({
+            ok: true,
+            headers: new Headers(),
+            text: async () => "ok"
+        }));
+        global.fetch = fetchMock;
+
+        const api = new ApiTransport();
+        const params = new URLSearchParams({ a: "1", b: "2" });
+        await api.post("http://test.com/post", params);
+
+        const opts = fetchMock.mock.calls[0][1];
+        expect(opts.headers["Content-Type"]).toBeUndefined(); // fetch sets this natively for URLSearchParams
+        expect(opts.body).toBeInstanceOf(URLSearchParams);
+    });
+
+    test("returns raw response if rawResponse is true", async () => {
+        const rawRes = { ok: true, isRaw: true };
+        const fetchMock = mock(async () => rawRes);
+        global.fetch = fetchMock;
+
+        const api = new ApiTransport();
+        const data = await api.get("http://test.com/raw", { rawResponse: true });
+
+        expect(data).toBe(rawRes);
+    });
+
+    test("does not throw if throwOnError is false", async () => {
+        const fetchMock = mock(async () => ({
+            ok: false,
+            status: 429,
+            headers: new Headers(),
+            text: async () => "Rate Limited"
+        }));
+        global.fetch = fetchMock;
+
+        const api = new ApiTransport();
+        const data = await api.get("http://test.com/429", { throwOnError: false, rawResponse: true });
+
+        expect(data.status).toBe(429);
+    });
 });

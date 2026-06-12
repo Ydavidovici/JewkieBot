@@ -1,6 +1,8 @@
 import {dbClient} from "./dbClient.js";
+import {Notifier} from "./notifier.js";
 import {nullNotifier} from "./notifier.js";
 import {OPENINGS} from "./openings.js";
+import {ApiTransport} from "./apiTransport.js";
 
 export class LichessRateLimited extends Error {
     constructor(retryAfterSec) {
@@ -32,7 +34,7 @@ export class LichessBot {
         this.maxConcurrentGames = options.maxConcurrentGames ?? 4;
         this.huntPollIntervalMs = options.huntPollIntervalMs ?? 1000;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 5000;
-        this.notifier = options.notifier ?? nullNotifier;
+        this.notifier = options.notifier ?? new Notifier() ?? nullNotifier;
 
         // Cool-down for bots that ignored our challenges. We keep a map of username -> expiresAt so the pool builder can skip them on the next hunt.
         this.declineCooldownMs = options.declineCooldownMs ?? 15 * 60 * 1000;
@@ -57,6 +59,11 @@ export class LichessBot {
         this.rateLimitedUntil = 0;
         this.rateLimitConsecutiveHits = 0;
         this.rateLimitMaxMultiplier = options.rateLimitMaxMultiplier ?? 10;
+        
+        this.apiTransport = options.apiTransport ?? new ApiTransport({
+            token: this.token,
+            notifier: this.notifier
+        });
 
         this.authHeader = {Authorization: `Bearer ${this.token}`};
         this.formHeaders = {
@@ -94,8 +101,7 @@ export class LichessBot {
         const blackString = blackOpeningId ? `${whiteString ? ", " : ""}black=${blackOpeningId}` : "";
         const optionsString = whiteString || blackString ? `, ${whiteString}${blackString}` : "";
 
-        // FIXME: we should use notifier, not console.log
-        console.log(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optionsString})`);
+        this.notifier.info(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optionsString})`);
         this._tickAutoplay();
     }
 
@@ -106,7 +112,7 @@ export class LichessBot {
 
         this.autoplay = null;
         this.notifier.info("[Autoplay] Autoplay disabled");
-        console.log("[Autoplay] Disabled");
+        this.notifier.info("[Autoplay] Disabled");
     }
 
     autoplayStatus() {
@@ -149,37 +155,37 @@ export class LichessBot {
             : this.huntNearRating(limit, increment, rated, {window});
 
         huntPromise
-            .then(() => {
-                if (!this.autoplay) return;
-                this.autoplay.currentBackoffMs = 0;
-            })
-            .catch(err => {
-                if (!this.autoplay) return;
+        .then(() => {
+            if (!this.autoplay) return;
+            this.autoplay.currentBackoffMs = 0;
+        })
+        .catch(err => {
+            if (!this.autoplay) return;
 
-                let next;
+            let next;
 
-                if (err instanceof LichessRateLimited) {
-                    // Honour Lichess's Retry-After instead of doubling, but
-                    // never go below the existing exponential backoff (in
-                    // case Lichess sends a short Retry-After while we're
-                    // already backing off for other reasons).
-                    next = Math.max(err.retryAfterSec * 1000 + 500, this.autoplay.currentBackoffMs || 0);
-                    this.notifier.warn("[Hunt] Lichess rate limit", {retryAfterSec: err.retryAfterSec});
-                } else {
-                    // Exponential backoff: 30s, 60s, 120s.
-                    next = this.autoplay.currentBackoffMs === 0 ? 30_000 : Math.min(this.autoplay.currentBackoffMs * 2, 120_000);
-                }
-                this.autoplay.currentBackoffMs = next;
-                console.log(`[Autoplay] Hunt failed (${err.message}); retrying in ${next / 1000}s`);
-            })
-            .finally(() => {
-                if (!this.autoplay) return;
+            if (err instanceof LichessRateLimited) {
+                // Honour Lichess's Retry-After instead of doubling, but
+                // never go below the existing exponential backoff (in
+                // case Lichess sends a short Retry-After while we're
+                // already backing off for other reasons).
+                next = Math.max(err.retryAfterSec * 1000 + 500, this.autoplay.currentBackoffMs || 0);
+                this.notifier.warn("[Hunt] Lichess rate limit", {retryAfterSec: err.retryAfterSec});
+            } else {
+                // Exponential backoff: 30s, 60s, 120s.
+                next = this.autoplay.currentBackoffMs === 0 ? 30_000 : Math.min(this.autoplay.currentBackoffMs * 2, 120_000);
+            }
+            this.autoplay.currentBackoffMs = next;
+            this.notifier.info(`[Autoplay] Hunt failed (${err.message}); retrying in ${next / 1000}s`);
+        })
+        .finally(() => {
+            if (!this.autoplay) return;
 
-                this.autoplay.huntInFlight = false;
+            this.autoplay.huntInFlight = false;
 
-                const wait = this.autoplay.currentBackoffMs || 10_000;
-                this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
-            });
+            const wait = this.autoplay.currentBackoffMs || 10_000;
+            this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
+        });
     }
 
     async _loadRateLimitState() {
@@ -199,11 +205,11 @@ export class LichessBot {
                     // The saved rateLimitedUntil already encodes how long to wait;
                     // once that expires we start fresh at 1×.
                     const remainingSec = Math.ceil((this.rateLimitedUntil - this._now()) / 1000);
-                    console.log(`[Bot] Restored rate limit state from disk: rate-limited for ${remainingSec}s`);
+                    this.notifier.info(`[Bot] Restored rate limit state from disk: rate-limited for ${remainingSec}s`);
                 }
             }
         } catch (err) {
-            console.error("[Bot] Failed to load rate limit state:", err);
+            this.notifier.error("[Bot] Failed to load rate limit state:", err);
         }
     }
 
@@ -214,7 +220,7 @@ export class LichessBot {
             const data = {rateLimitedUntil: this.rateLimitedUntil};
             await Bun.write("lichess-rate-limit.json", JSON.stringify(data));
         } catch (err) {
-            console.error("[Bot] Failed to save rate limit state:", err);
+            this.notifier.error("[Bot] Failed to save rate limit state:", err);
         }
     }
 
@@ -235,22 +241,23 @@ export class LichessBot {
             if (res && res.ok) {
                 const profile = await res.json();
                 this.botProfile = profile.id;
-                console.log(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
+                this.notifier.info(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
                 return true;
             }
-        } catch (_) {}
+        } catch (_) {
+        }
         return false;
     }
 
     async start() {
-        // FIXME: we should use notifier, not console.log
-        console.log("[Bot] Starting...");
-        await this._loadRateLimitState().catch(() => {});
+        this.notifier.info("[Bot] Starting...");
+        await this._loadRateLimitState().catch(() => {
+        });
 
         if (this._isRateLimited()) {
             this.botProfile = null;
             const waitSec = this._rateLimitRemainingSec();
-            console.warn(`[Bot] Restored rate limit state from disk. Starting in rate-limited state for ${waitSec}s.`);
+            this.notifier.warn(`[Bot] Restored rate limit state from disk. Starting in rate-limited state for ${waitSec}s.`);
             setTimeout(() => this.streamEvents(), waitSec * 1000);
             return;
         }
@@ -264,11 +271,11 @@ export class LichessBot {
             }
             const profile = await res.json();
             this.botProfile = profile.id;
-            console.log(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
+            this.notifier.info(`[Bot] Logged in as: ${this.botProfile} (max ${this.maxConcurrentGames} concurrent games)`);
         } catch (err) {
             if (err instanceof LichessRateLimited) {
                 this.botProfile = null;
-                console.warn(`[Bot] Started in rate-limited state. Will resolve profile in background.`);
+                this.notifier.warn(`[Bot] Started in rate-limited state. Will resolve profile in background.`);
             } else {
                 throw err;
             }
@@ -278,7 +285,7 @@ export class LichessBot {
     }
 
     stop() {
-        console.log("[Bot] Stopping...");
+        this.notifier.info("[Bot] Stopping...");
         this.stopAutoplay();
 
         if (this.eventController) {
@@ -288,12 +295,12 @@ export class LichessBot {
 
         for (const [gameId, controller] of this.gameControllers) {
             controller.abort();
-            console.log(`[${gameId}] Stream aborted.`);
+            this.notifier.info(`[${gameId}] Stream aborted.`);
         }
         this.gameControllers.clear();
 
         for (const [gameId, engine] of this.gameEngines) {
-            engine.stop().catch(err => console.error(`[${gameId}] Engine stop error:`, err));
+            engine.stop().catch(err => this.notifier.error(`[${gameId}] Engine stop error:`, err));
         }
         this.gameEngines.clear();
 
@@ -301,12 +308,12 @@ export class LichessBot {
         this.dbGameIds.clear();
         this.savedPlies.clear();
 
-        console.log("[Bot] Stopped.");
+        this.notifier.info("[Bot] Stopped.");
     }
 
     async streamEvents() {
         this.eventController = new AbortController();
-        console.log("[Bot] Listening for events...");
+       this.notifier.info("[Bot] Listening for events...");
 
         try {
             const res = await this._lichessFetch("https://lichess.org/api/stream/event", {
@@ -315,14 +322,15 @@ export class LichessBot {
             });
 
             if (!res.ok) {
-                console.error("[Bot] Event stream failed:", res.statusText);
+                this.notifier.error("[Bot] Event stream failed:", res.statusText);
                 setTimeout(() => this.streamEvents(), this.reconnectDelayMs);
                 return;
             }
 
             // Attempt to resolve profile since the event stream connected successfully
             if (!this.botProfile) {
-                this._ensureProfile().catch(() => {});
+                this._ensureProfile().catch(() => {
+                });
             }
 
             await this.readNdjsonStream(res.body, this.eventController.signal, async (event) => {
@@ -334,10 +342,10 @@ export class LichessBot {
             });
         } catch (err) {
             if (err.name === "AbortError") {
-                console.log("[Bot] Event stream cancelled.");
+                this.notifier.info("[Bot] Event stream cancelled.");
                 return;
             }
-            console.error("[Bot] Event stream error:", err);
+            this.notifier.error("[Bot] Event stream error:", err);
             let delay = this.reconnectDelayMs;
             if (this._isRateLimited()) {
                 delay = Math.max(delay, this._rateLimitRemainingSec() * 1000);
@@ -356,19 +364,19 @@ export class LichessBot {
 
         // TODO: support variants
         if (variant !== "standard") {
-            console.log(`[Challenge ${challenge.id}] Declining — unsupported variant: ${variant}`);
+            this.notifier.info(`[Challenge ${challenge.id}] Declining — unsupported variant: ${variant}`);
             await this.declineChallenge(challenge.id, "variant");
             return;
         }
 
         if (this.activeGames.size >= this.maxConcurrentGames) {
-            console.log(`[Challenge ${challenge.id}] Declining — at max concurrent games (${this.maxConcurrentGames})`);
+            this.notifier.info(`[Challenge ${challenge.id}] Declining — at max concurrent games (${this.maxConcurrentGames})`);
             this.notifier.info(`[Challenge] Declining challenge ${challenge.id}`, {reason: "at_cap", active: this.activeGames.size});
             await this.declineChallenge(challenge.id, "later");
             return;
         }
 
-        console.log(`[Challenge ${challenge.id}] Accepting`);
+        this.notifier.info(`[Challenge ${challenge.id}] Accepting`);
         await this._throttleGlobalChallenge();
         await this._lichessFetch(`https://lichess.org/api/challenge/${challenge.id}/accept`, {
             method: "POST",
@@ -383,17 +391,19 @@ export class LichessBot {
             method: "POST",
             headers: this.formHeaders,
             body,
-        }).catch(() => {});
+        }).catch(() => {
+        });
     }
 
     async playGame(gameId) {
         if (this.activeGames.has(gameId)) return;
         this.activeGames.add(gameId);
-        
-        console.log(`[${gameId}] Game started.`);
+
+        this.notifier.info(`[${gameId}] Game started.`);
         this.notifier.info(`[Game] Game started: ${gameId}`, {active: this.activeGames.size, max: this.maxConcurrentGames});
 
-        await this._ensureProfile().catch(() => {});
+        await this._ensureProfile().catch(() => {
+        });
 
         const gameController = new AbortController();
         this.gameControllers.set(gameId, gameController);
@@ -405,9 +415,12 @@ export class LichessBot {
         } catch (err) {
             // EngineCapReached or any factory failure: don't try to play. Resign and bail.
             // Existing in-flight games keep running — we just don't add another.
-            console.error(`[${gameId}] Engine factory rejected:`, err);
+            this.notifier.error(`[${gameId}] Engine factory rejected:`, err);
             this.notifier.warn(`[Game] Refused to spawn engine for ${gameId}`, {message: err?.message});
-            try { await this.resignGame(gameId); } catch (_) {}
+            try {
+                await this.resignGame(gameId);
+            } catch (_) {
+            }
             this.activeGames.delete(gameId);
             this.gameControllers.delete(gameId);
             return;
@@ -415,9 +428,12 @@ export class LichessBot {
         this.gameEngines.set(gameId, engine);
 
         engine.on("fatal_error", async (err) => {
-            console.error(`[${gameId}] !! ENGINE FATAL ERROR !! Resigning game.`, err);
+            this.notifier.error(`[${gameId}] !! ENGINE FATAL ERROR !! Resigning game.`, err);
             this.notifier.error(`[Game] Engine fatal in game ${gameId}`, {message: err?.message});
-            try { await this.resignGame(gameId); } catch (_) {}
+            try {
+                await this.resignGame(gameId);
+            } catch (_) {
+            }
             gameController.abort();
         });
 
@@ -439,8 +455,11 @@ export class LichessBot {
                     await engine.setOption("OwnBook", "false");
                 }
             } catch (startErr) {
-                console.error(`[${gameId}] !! ENGINE START FAILED !! Resigning game.`, startErr);
-                try { await this.resignGame(gameId); } catch (_) {}
+                this.notifier.error(`[${gameId}] !! ENGINE START FAILED !! Resigning game.`, startErr);
+                try {
+                    await this.resignGame(gameId);
+                } catch (_) {
+                }
                 throw startErr;
             }
 
@@ -498,7 +517,7 @@ export class LichessBot {
 
                 if (status !== "started") {
                     const result = mapResult(status, winner);
-                    console.log(`[${gameId}] Game over: ${status}, winner: ${winner ?? "draw"}`);
+                    this.notifier.info(`[${gameId}] Game over: ${status}, winner: ${winner ?? "draw"}`);
                     this.notifier.info(`[Game] Game over: ${gameId}`, {
                         status,
                         winner: winner ?? "draw",
@@ -517,9 +536,12 @@ export class LichessBot {
                     } else {
                         consecutiveMoveFailures++;
                         if (consecutiveMoveFailures >= MAX_CONSECUTIVE_MOVE_FAILURES) {
-                            console.error(`[${gameId}] Engine stuck (${consecutiveMoveFailures} consecutive move failures) — resigning.`);
+                            this.notifier.error(`[${gameId}] Engine stuck (${consecutiveMoveFailures} consecutive move failures) — resigning.`);
                             this.notifier.warn(`[Game] Engine stuck in ${gameId}, resigning`, {failures: consecutiveMoveFailures});
-                            try { await this.resignGame(gameId); } catch (_) {}
+                            try {
+                                await this.resignGame(gameId);
+                            } catch (_) {
+                            }
                             gameController.abort();
                             return;
                         }
@@ -529,15 +551,19 @@ export class LichessBot {
 
         } catch (err) {
             if (err.name !== "AbortError") {
-                console.error(`[${gameId}] Game stream error:`, err);
+                this.notifier.error(`[${gameId}] Game stream error:`, err);
             }
         } finally {
-            try { await engine.stop(); } catch (e) { console.error(`[${gameId}] Engine stop error:`, e); }
+            try {
+                await engine.stop();
+            } catch (e) {
+                this.notifier.error(`[${gameId}] Engine stop error:`, e);
+            }
             this.gameEngines.delete(gameId);
             this.activeGames.delete(gameId);
             this.gameOpenings.delete(gameId);
             this.gameControllers.delete(gameId);
-            console.log(`[${gameId}] Cleaned up.`);
+            this.notifier.info(`[${gameId}] Cleaned up.`);
             this._tickAutoplay();
         }
     }
@@ -557,8 +583,7 @@ export class LichessBot {
      * @returns {Promise<boolean>} Success of the move
      */
     async makeMove(engine, gameId, initialFen, movesStr, myColor, timeInfo, totalTimeMs) {
-        // FIXME: we should use notifier, not console.log
-        console.log(`[${gameId}] My turn (${myColor}).`);
+        this.notifier.info(`[${gameId}] My turn (${myColor}).`);
 
         const movesArray = movesStr.trim() === "" ? [] : movesStr.trim().split(" ");
 
@@ -577,8 +602,7 @@ export class LichessBot {
                 }
             }
             this.gameOpenings.set(gameId, currentOpeningId);
-            // FIXME: we should use notifier, not console.log
-            console.log(`[${gameId}] Selected opening: ${currentOpeningId} for ${myColor}`);
+            this.notifier.info(`[${gameId}] Selected opening: ${currentOpeningId} for ${myColor}`);
         }
 
         if (currentOpeningId !== "balanced" && OPENINGS[currentOpeningId]) {
@@ -592,7 +616,7 @@ export class LichessBot {
             }
             if (matches && movesArray.length < expectedMoves.length) {
                 const nextMove = expectedMoves[movesArray.length];
-                console.log(`[${gameId}] Forcing specific opening move: ${nextMove}`);
+                this.notifier.info(`[${gameId}] Forcing specific opening move: ${nextMove}`);
                 return await this.sendMove(gameId, nextMove);
             }
         }
@@ -600,7 +624,7 @@ export class LichessBot {
         try {
             await engine.position(initialFen, movesArray);
         } catch (err) {
-            console.warn(`[${gameId}] position command failed: ${err.message}`);
+            this.notifier.warn(`[${gameId}] position command failed: ${err.message}`);
             return false;
         }
 
@@ -610,19 +634,19 @@ export class LichessBot {
             rawMove = await engine.go({
                 whiteTime: timeInfo.wtime,
                 blackTime: timeInfo.btime,
-                whiteInc:  timeInfo.winc,
-                blackInc:  timeInfo.binc,
+                whiteInc: timeInfo.winc,
+                blackInc: timeInfo.binc,
             });
         } catch (err) {
-            console.warn(`[${gameId}] go command failed: ${err.message}`);
+            this.notifier.warn(`[${gameId}] go command failed: ${err.message}`);
             return false;
         }
 
         const bestMove = normalizeMove(rawMove);
-        console.log(`[${gameId}] Engine: ${bestMove}`);
+        this.notifier.info(`[${gameId}] Engine: ${bestMove}`);
 
         if (!bestMove || bestMove === "(none)" || bestMove === "0000") {
-            console.warn(`[${gameId}] No valid move — resigning.`);
+            this.notifier.warn(`[${gameId}] No valid move — resigning.`);
             await this.resignGame(gameId);
             return false;
         }
@@ -653,7 +677,7 @@ export class LichessBot {
                 });
                 if (!res.ok) {
                     const text = await res.text();
-                    console.warn(`[${gameId}] Move rejected (${move}): HTTP ${res.status} ${text}`);
+                    this.notifier.warn(`[${gameId}] Move rejected (${move}): HTTP ${res.status} ${text}`);
                     if (res.status >= 500) {
                         if (attempt < retries) {
                             await new Promise(r => setTimeout(r, 1000));
@@ -664,7 +688,7 @@ export class LichessBot {
                 }
                 return true;
             } catch (err) {
-                console.warn(`[${gameId}] Move API failed (${move}): ${err.message} (attempt ${attempt + 1}/${retries + 1})`);
+                this.notifier.warn(`[${gameId}] Move API failed (${move}): ${err.message} (attempt ${attempt + 1}/${retries + 1})`);
                 if (attempt < retries) {
                     await new Promise(r => setTimeout(r, 1000));
                     continue;
@@ -679,20 +703,21 @@ export class LichessBot {
         await this._lichessFetch(`https://lichess.org/api/bot/game/${gameId}/resign`, {
             method: "POST",
             headers: this.authHeader,
-        }).catch(() => {});
+        }).catch(() => {
+        });
     }
 
     async createDbGame(lichessGameId, {whiteUsername, blackUsername, variant, rated, timeControl, whiteRating, blackRating}) {
         try {
             const game = await dbClient.createGame({lichessGameId, whiteUsername, blackUsername, variant, rated, timeControl, whiteRating, blackRating, env: process.env.APP_ENV || "prod", source: "lichess"});
-            
+
             this.dbGameIds.set(lichessGameId, game.id);
 
             // Fetch any existing moves if resuming
             const moves = await dbClient.getGameMoves(game.id);
             this.savedPlies.set(lichessGameId, moves.length);
         } catch (error) {
-            console.error(`[${lichessGameId}] Failed to create/resume DB game:`, error.message);
+            this.notifier.error(`[${lichessGameId}] Failed to create/resume DB game:`, error.message);
         }
     }
 
@@ -712,7 +737,7 @@ export class LichessBot {
             })));
             this.savedPlies.set(lichessGameId, allMoves.length);
         } catch (error) {
-            console.error(`[${lichessGameId}] Failed to save moves:`, error.message);
+            this.notifier.error(`[${lichessGameId}] Failed to save moves:`, error.message);
         }
     }
 
@@ -727,7 +752,7 @@ export class LichessBot {
                 finished_at: new Date().toISOString(),
             });
         } catch (error) {
-            console.error(`[${lichessGameId}] Failed to finalize DB game:`, error.message);
+            this.notifier.error(`[${lichessGameId}] Failed to finalize DB game:`, error.message);
         }
 
         this.dbGameIds.delete(lichessGameId);
@@ -736,7 +761,7 @@ export class LichessBot {
 
     async createChallenge(username, limit, increment, rated = true) {
         await this._throttleGlobalChallenge();
-        console.log(`Challenging ${username} (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
+        this.notifier.info(`Challenging ${username} (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
         const body = new URLSearchParams({
             "clock.limit": limit,
             "clock.increment": increment,
@@ -753,7 +778,7 @@ export class LichessBot {
 
     async createOpenChallenge(limit, increment, rated = true) {
         await this._throttleGlobalChallenge();
-        console.log(`Creating open challenge (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
+        this.notifier.info(`Creating open challenge (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
         const body = new URLSearchParams({
             "clock.limit": limit,
             "clock.increment": increment,
@@ -770,7 +795,7 @@ export class LichessBot {
 
     async createAiChallenge(level, limit, increment) {
         await this._throttleGlobalChallenge();
-        console.log(`Challenging Stockfish level ${level}...`);
+        this.notifier.info(`Challenging Stockfish level ${level}...`);
         const body = new URLSearchParams({
             level,
             "clock.limit": limit,
@@ -790,7 +815,8 @@ export class LichessBot {
         await this._lichessFetch(`https://lichess.org/api/challenge/${challengeId}/cancel`, {
             method: "POST",
             headers: this.authHeader,
-        }).catch(() => {});
+        }).catch(() => {
+        });
     }
 
     _pruneDeclined() {
@@ -829,19 +855,21 @@ export class LichessBot {
         if (candidate > this.rateLimitedUntil) this.rateLimitedUntil = candidate;
 
         if (multiplier > 1) {
-            console.warn(`[Hunt] Consecutive 429 #${this.rateLimitConsecutiveHits}; backing off ${totalSec}s (${multiplier}× Retry-After)`);
+            this.notifier.warn(`[Hunt] Consecutive 429 #${this.rateLimitConsecutiveHits}; backing off ${totalSec}s (${multiplier}× Retry-After)`);
         }
 
-        this._saveRateLimitState().catch(() => {});
+        this._saveRateLimitState().catch(() => {
+        });
     }
 
     _onSuccessfulPost() {
         // A successful challenge POST proves our rate-limit credit is restored.
         if (this.rateLimitConsecutiveHits > 0) {
-            console.log(`[Hunt] Rate-limit recovered after ${this.rateLimitConsecutiveHits} consecutive hit(s).`);
+            this.notifier.info(`[Hunt] Rate-limit recovered after ${this.rateLimitConsecutiveHits} consecutive hit(s).`);
             this.notifier.info("[Autoplay] Autoplay restarted after rate limit", {hits: this.rateLimitConsecutiveHits});
             this.rateLimitConsecutiveHits = 0;
-            this._saveRateLimitState().catch(() => {});
+            this._saveRateLimitState().catch(() => {
+            });
         }
     }
 
@@ -863,7 +891,7 @@ export class LichessBot {
             });
         } catch (err) {
             if (err instanceof LichessRateLimited) throw err;
-            console.warn(`[Hunt] Challenge to ${target.username} threw: ${err?.message}`);
+            this.notifier.warn(`[Hunt] Challenge to ${target.username} threw: ${err?.message}`);
             this._markDeclined(target.username);
             return null;
         }
@@ -873,9 +901,11 @@ export class LichessBot {
             // Defensive: some mocks (and edge-case responses) omit text(). Don't
             // let a missing method cause us to skip the _markDeclined() call.
             let detail = "";
-            try { detail = typeof cRes.text === "function" ? await cRes.text() : ""; }
-            catch (_) {}
-            console.warn(`[Hunt] ${target.username}: HTTP ${cRes.status ?? "?"} ${String(detail).slice(0, 200)}`);
+            try {
+                detail = typeof cRes.text === "function" ? await cRes.text() : "";
+            } catch (_) {
+            }
+            this.notifier.warn(`[Hunt] ${target.username}: HTTP ${cRes.status ?? "?"} ${String(detail).slice(0, 200)}`);
             this._markDeclined(target.username);
             return null;
         }
@@ -907,7 +937,7 @@ export class LichessBot {
                     if (err instanceof LichessRateLimited) {
                         throw err;
                     }
-                    console.warn(`[Hunt] Challenge to ${target.username} threw: ${err?.message}`);
+                    this.notifier.warn(`[Hunt] Challenge to ${target.username} threw: ${err?.message}`);
                     continue;
                 }
 
@@ -966,7 +996,7 @@ export class LichessBot {
         if (!this._profileCache || this._now() - this._profileCache.time > 60000) {
             const res = await this._lichessFetch("https://lichess.org/api/account", {headers: this.authHeader});
             if (!res.ok) throw new Error("Failed to fetch own profile");
-            this._profileCache = { data: await res.json(), time: this._now() };
+            this._profileCache = {data: await res.json(), time: this._now()};
         }
         const profile = this._profileCache.data;
         const rating = profile.perfs?.[perf]?.rating;
@@ -983,7 +1013,7 @@ export class LichessBot {
         }
         const perf = this._performanceFromTimeControl(limit, increment);
         const {rating: myRating, prov} = await this._fetchMyRating(perf);
-        console.log(`[Hunt] My ${perf} rating: ${myRating}${prov ? " (provisional)" : ""}; window ±${window} (max ±${maxWindow})`);
+        this.notifier.info(`[Hunt] My ${perf} rating: ${myRating}${prov ? " (provisional)" : ""}; window ±${window} (max ±${maxWindow})`);
 
         const bots = await this._fetchOnlineBots(500);
 
@@ -992,9 +1022,9 @@ export class LichessBot {
         // Pre-compute deltas for every rated, non-self bot so we can re-filter
         // by window cheaply across widening attempts.
         const ratedBots = bots
-            .filter(b => b.id !== this.botProfile?.toLowerCase())
-            .filter(b => b.perfs?.[perf]?.rating != null)
-            .map(b => ({...b, _delta: Math.abs(b.perfs[perf].rating - myRating)}));
+        .filter(b => b.id !== this.botProfile?.toLowerCase())
+        .filter(b => b.perfs?.[perf]?.rating != null)
+        .map(b => ({...b, _delta: Math.abs(b.perfs[perf].rating - myRating)}));
 
         // Auto-widen: grow the window until the cool-down-filtered pool has
         // at least one candidate or we hit maxWindow. Without this we get
@@ -1009,20 +1039,20 @@ export class LichessBot {
             const inWindow = ratedBots.filter(b => b._delta <= currentWindow);
             filteredOut = inWindow.filter(b => this._inDeclineCooldown(b.username)).length;
             pool = inWindow
-                .filter(b => !this._inDeclineCooldown(b.username))
-                .sort((a, b) => a._delta - b._delta)
-                .slice(0, poolSize);
+            .filter(b => !this._inDeclineCooldown(b.username))
+            .sort((a, b) => a._delta - b._delta)
+            .slice(0, poolSize);
 
             if (pool.length > 0) break;
             if (currentWindow >= maxWindow) break;
 
             const next = Math.min(currentWindow * 2 || 1, maxWindow);
-            console.log(`[Hunt] Empty pool at ±${currentWindow} (${inWindow.length} eligible, ${filteredOut} in cool-down) — widening to ±${next}`);
+            this.notifier.info(`[Hunt] Empty pool at ±${currentWindow} (${inWindow.length} eligible, ${filteredOut} in cool-down) — widening to ±${next}`);
             currentWindow = next;
         }
 
         if (filteredOut > 0) {
-            console.log(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down (active: ${this.recentlyDeclined.size})`);
+            this.notifier.info(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down (active: ${this.recentlyDeclined.size})`);
         }
 
         // Fisher-Yates shuffle.
@@ -1040,9 +1070,9 @@ export class LichessBot {
         }
 
         const widenedNote = currentWindow !== widenedFrom ? ` (widened ±${widenedFrom}→±${currentWindow})` : "";
-        console.log(`[Hunt] ${candidates.length} candidates from pool of ${pool.length}${widenedNote}; challenging sequentially`);
+        this.notifier.info(`[Hunt] ${candidates.length} candidates from pool of ${pool.length}${widenedNote}; challenging sequentially`);
         for (const c of candidates) {
-            console.log(`[Hunt]   ${c.username} (${perf}=${c.perfs[perf].rating}, Δ${c._delta})`);
+            this.notifier.info(`[Hunt]   ${c.username} (${perf}=${c.perfs[perf].rating}, Δ${c._delta})`);
         }
 
         const winner = await this._raceChallenges(candidates, limit, increment, rated);
@@ -1058,29 +1088,29 @@ export class LichessBot {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
         }
-        console.log(`Hunting weakest bot (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
+        this.notifier.info(`Hunting weakest bot (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
 
         const bots = await this._fetchOnlineBots(500);
 
         this._pruneDeclined();
 
         const eligible = bots
-            .filter(b => b.id !== this.botProfile?.toLowerCase())
-            .filter(b => b.perfs?.blitz?.rating != null);
+        .filter(b => b.id !== this.botProfile?.toLowerCase())
+        .filter(b => b.perfs?.blitz?.rating != null);
 
         const filteredOut = eligible.filter(b => this._inDeclineCooldown(b.username)).length;
         const candidates = eligible
-            .filter(b => !this._inDeclineCooldown(b.username))
-            .sort((a, b) => a.perfs.blitz.rating - b.perfs.blitz.rating)
-            .slice(0, 2);
+        .filter(b => !this._inDeclineCooldown(b.username))
+        .sort((a, b) => a.perfs.blitz.rating - b.perfs.blitz.rating)
+        .slice(0, 2);
 
         if (filteredOut > 0) {
-            console.log(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down`);
+            this.notifier.info(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down`);
         }
 
         if (candidates.length === 0) throw new Error("No candidates found");
 
-        console.log(`[Hunt] ${candidates.length} weakest candidates; challenging sequentially`);
+        this.notifier.info(`[Hunt] ${candidates.length} weakest candidates; challenging sequentially`);
         const winner = await this._raceChallenges(candidates, limit, increment, rated);
         if (winner) {
             return {status: "success", message: `Playing vs ${winner.target.username}`, gameId: winner.id};
@@ -1115,7 +1145,7 @@ export class LichessBot {
         const timeoutMs = options.timeoutMs ?? 15000;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(new Error("Lichess timeout")), timeoutMs);
-        
+
         // Merge with existing signal if any
         if (options.signal) {
             options.signal.addEventListener("abort", () => controller.abort(options.signal.reason), {once: true});
@@ -1123,15 +1153,23 @@ export class LichessBot {
 
         let res;
         try {
-            res = await fetch(url, { ...options, signal: controller.signal });
+            res = await this.apiTransport.request(url, {
+                ...options, 
+                signal: controller.signal, 
+                rawResponse: true, 
+                throwOnError: false
+            });
         } finally {
             clearTimeout(timeoutId);
         }
 
         if (res.status === 429) {
             let body = "";
-            try { body = await res.text(); } catch (e) {}
-            console.error(`[Lichess API] 429 Rate Limited. Response body: ${body}`);
+            try {
+                body = await res.text();
+            } catch (e) {
+            }
+            this.notifier.error(`[Lichess API] 429 Rate Limited. Response body: ${body}`);
             const retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
             const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : this.defaultRetryAfterSec;
             this._setRateLimit(seconds);
@@ -1147,8 +1185,10 @@ export class LichessBot {
             });
             if (!res.ok) throw new Error("Failed to fetch online bots");
             const bots = [];
-            await this.readNdjsonStream(res.body, null, (bot) => { bots.push(bot); });
-            this._onlineBotsCache = { data: bots, time: this._now() };
+            await this.readNdjsonStream(res.body, null, (bot) => {
+                bots.push(bot);
+            });
+            this._onlineBotsCache = {data: bots, time: this._now()};
         }
         return this._onlineBotsCache.data;
     }
@@ -1158,7 +1198,8 @@ export class LichessBot {
         const decoder = new TextDecoder();
         let buffer = "";
 
-        const onAbort = () => reader.cancel().catch(() => {});
+        const onAbort = () => reader.cancel().catch(() => {
+        });
         signal?.addEventListener("abort", onAbort, {once: true});
 
         try {
@@ -1175,7 +1216,7 @@ export class LichessBot {
                     try {
                         await callback(JSON.parse(line));
                     } catch (e) {
-                        console.error("[NDJSON] Callback error:", e);
+                        this.notifier.error("[NDJSON] Callback error:", e);
                     }
                 }
             }

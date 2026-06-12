@@ -10,13 +10,6 @@ export const LEVELS = Object.freeze({
 
 const LEVEL_RANK = {info: 10, warn: 20, error: 30, fatal: 40};
 
-const SUBJECT_TO_NOTIFICATIONS_CHANNEL = [
-    "autoplay restart",
-    "autoplay enabled",
-    "rate limit",
-    "rate-limited",
-];
-
 export class WebhookTransport {
     constructor({url, token, project} = {}) {
         this.api = new ApiTransport({ baseUrl: url || process.env.API_NOTIFY_URL, token: token || process.env.API_NOTIFY_TOKEN });
@@ -27,14 +20,11 @@ export class WebhookTransport {
     async send(event) {
         if (!this.enabled) return;
 
-        const subjectLower = (event.subject ?? "").toLowerCase();
-        const channel = SUBJECT_TO_NOTIFICATIONS_CHANNEL.some(s => subjectLower.includes(s))
-            ? "notifications"
-            : "logs";
+        const channel = "notifications";
 
         let status;
         if (event.level === "error" || event.level === "fatal") status = "error";
-        else if (channel === "notifications") status = "success";
+        else status = "success";
 
         const levelStr = String(event.level ?? "info").toUpperCase();
         let bodyText = `[ ${levelStr} ] ${event.subject}`;
@@ -63,7 +53,7 @@ export class WebhookTransport {
 }
 
 export class Notifier extends EventEmitter {
-    constructor({minLevel = LEVELS.INFO, transports = []} = {}) {
+    constructor({minLevel = LEVELS.INFO, transports = [new WebhookTransport()]} = {}) {
         super();
         this.minLevel = minLevel;
         this.transports = [];

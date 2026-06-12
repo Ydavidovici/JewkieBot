@@ -1,84 +1,60 @@
-// FIXME: refactor for apitransport
-async function fetchApi(endpoint, options = {}) {
-    const BASE_URL = process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess";
-    const res = await fetch(`${BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-            "Content-Type": "application/json",
-            ...options.headers,
-        },
-    });
+import {ApiTransport} from "./apiTransport.js";
+import {nullNotifier} from "./notifier.js";
 
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`API Error: ${res.status} ${res.statusText} - ${text}`);
-    }
-
-    const json = await res.json();
-    return json.data !== undefined ? json.data : json;
-}
+const transport = new ApiTransport({
+    baseUrl: process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess",
+    notifier: nullNotifier,
+    unwrapData: true,
+});
 
 export const dbClient = {
+    setNotifier(newNotifier) {
+        transport.notifier = newNotifier || nullNotifier;
+    },
+
     async createGame(payload) {
-        return await fetchApi("/games", {
-            method: "POST",
-            body: JSON.stringify(payload),
-        });
+        return transport.post("/games", payload);
     },
 
     async createGamesBulk(payloads) {
-        return await fetchApi("/games/bulk", {
-            method: "POST",
-            body: JSON.stringify(payloads),
-        });
+        return transport.post("/games/bulk", payloads);
     },
 
     async updateGame(id, payload) {
-        return await fetchApi(`/games/${id}`, {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-        });
+        return transport.patch(`/games/${id}`, payload);
     },
 
     async getUnanalyzedGames() {
-        return await fetchApi("/games/unanalyzed");
+        return transport.get("/games/unanalyzed");
     },
 
     async getUnanalyzedGamesByPlayer(playerName) {
-        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}/unanalyzed`);
+        return transport.get(`/games/player/${encodeURIComponent(playerName)}/unanalyzed`);
     },
 
     async getGamesByPlayer(playerName) {
         // Automatically URL-encode the player name (e.g. for spaces or special chars)
-        return await fetchApi(`/games/player/${encodeURIComponent(playerName)}`);
+        return transport.get(`/games/player/${encodeURIComponent(playerName)}`);
     },
 
     async getGameMoves(id) {
-        return await fetchApi(`/games/${id}/moves`);
+        return transport.get(`/games/${id}/moves`);
     },
 
     async insertGameMoves(id, moves) {
-        return await fetchApi(`/games/${id}/moves/bulk`, {
-            method: "POST",
-            body: JSON.stringify(moves),
-        });
+        return transport.post(`/games/${id}/moves/bulk`, moves);
     },
 
     async insertMovesBulk(moves) {
-        return await fetchApi(`/moves/bulk`, {
-            method: "POST",
-            body: JSON.stringify(moves),
-        });
+        return transport.post(`/moves/bulk`, moves);
     },
 
     async insertMoveEvals(id, evals) {
-        return await fetchApi(`/games/${id}/evals/bulk`, {
-            method: "POST",
-            body: JSON.stringify(evals),
-        });
+        return transport.post(`/games/${id}/evals/bulk`, evals);
     },
 
     async getStats() {
-        return await fetchApi("/stats");
-    }
+        return transport.get("/stats");
+    },
 };
+
