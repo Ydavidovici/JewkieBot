@@ -1,4 +1,5 @@
 import {EventEmitter} from "node:events";
+import {ApiTransport} from "./apiTransport.js";
 
 export const LEVELS = Object.freeze({
     INFO: "info",
@@ -9,12 +10,66 @@ export const LEVELS = Object.freeze({
 
 const LEVEL_RANK = {info: 10, warn: 20, error: 30, fatal: 40};
 
+const SUBJECT_TO_NOTIFICATIONS_CHANNEL = [
+    "autoplay restart",
+    "autoplay enabled",
+    "rate limit",
+    "rate-limited",
+];
+
+export class WebhookTransport {
+    constructor({url, token, project} = {}) {
+        this.api = new ApiTransport({ baseUrl: url || process.env.API_NOTIFY_URL, token: token || process.env.API_NOTIFY_TOKEN });
+        this.project = project || process.env.API_NOTIFY_PROJECT || "";
+        this.enabled = Boolean(this.api.baseUrl && this.api.token);
+    }
+
+    async send(event) {
+        if (!this.enabled) return;
+
+        const subjectLower = (event.subject ?? "").toLowerCase();
+        const channel = SUBJECT_TO_NOTIFICATIONS_CHANNEL.some(s => subjectLower.includes(s))
+            ? "notifications"
+            : "logs";
+
+        let status;
+        if (event.level === "error" || event.level === "fatal") status = "error";
+        else if (channel === "notifications") status = "success";
+
+        const levelStr = String(event.level ?? "info").toUpperCase();
+        let bodyText = `[ ${levelStr} ] ${event.subject}`;
+        if (event.details != null && (typeof event.details !== "object" || Object.keys(event.details).length > 0)) {
+            try {
+                bodyText += "\n" + (typeof event.details === "object"
+                    ? JSON.stringify(event.details, null, 2)
+                    : String(event.details));
+            } catch (_) {
+                bodyText += "\n[unserializable details]";
+            }
+        }
+        const message = "```\n" + bodyText + "\n```";
+
+        const payload = {message, channel, project: this.project};
+        if (status) payload.status = status;
+
+        try {
+            await this.api.post("", payload);
+        } catch (err) {
+            // Error logging is handled by ApiTransport already, but to prevent recursion,
+            // we ensure the error string includes "[ApiTransport]" to be caught by the skip list.
+            console.error("[ApiTransport] Webhook request failed:", err?.message ?? err);
+        }
+    }
+}
+
 export class Notifier extends EventEmitter {
     constructor({minLevel = LEVELS.INFO, transports = []} = {}) {
         super();
         this.minLevel = minLevel;
         this.transports = [];
-        for (const t of transports) this.addTransport(t);
+        for (const t of transports) {
+            this.addTransport(t);
+        }
     }
 
     addTransport(transport) {
@@ -29,10 +84,21 @@ export class Notifier extends EventEmitter {
         this.minLevel = level;
     }
 
-    info(subject, details)  { return this.notify(LEVELS.INFO,  subject, details); }
-    warn(subject, details)  { return this.notify(LEVELS.WARN,  subject, details); }
-    error(subject, details) { return this.notify(LEVELS.ERROR, subject, details); }
-    fatal(subject, details) { return this.notify(LEVELS.FATAL, subject, details); }
+    info(subject, details) {
+        return this.notify(LEVELS.INFO, subject, details);
+    }
+
+    warn(subject, details) {
+        return this.notify(LEVELS.WARN, subject, details);
+    }
+
+    error(subject, details) {
+        return this.notify(LEVELS.ERROR, subject, details);
+    }
+
+    fatal(subject, details) {
+        return this.notify(LEVELS.FATAL, subject, details);
+    }
 
     notify(level, subject, details) {
         if (LEVEL_RANK[level] < LEVEL_RANK[this.minLevel]) return Promise.resolve();
@@ -65,145 +131,73 @@ export class Notifier extends EventEmitter {
     // Best-effort flush: lets transports drain any buffered work before exit.
     async flush(timeoutMs = 3000) {
         const flushes = this.transports
-            .filter(t => typeof t.flush === "function")
-            .map(t => Promise.resolve(t.flush()).catch(err => {
-                console.error("[Notifier] Flush failed:", err);
-            }));
+        .filter(t => typeof t.flush === "function")
+        .map(t => Promise.resolve(t.flush()).catch(err => {
+            console.error("[Notifier] Flush failed:", err);
+        }));
 
         const timeout = new Promise(r => setTimeout(r, timeoutMs));
         await Promise.race([Promise.all(flushes), timeout]);
     }
 }
 
-export class ConsoleTransport {
-    constructor({stream = console, prefix = "[Notify]"} = {}) {
-        this.stream = stream;
-        this.prefix = prefix;
-    }
-
-    send(event) {
-        const line = `${this.prefix} [${event.level.toUpperCase()}] ${event.subject}`;
-        const fn = event.level === "error" || event.level === "fatal"
-            ? this.stream.error.bind(this.stream)
-            : event.level === "warn"
-                ? this.stream.warn.bind(this.stream)
-                : this.stream.log.bind(this.stream);
-
-        if (event.details != null) fn(line, event.details);
-        else fn(line);
-    }
-}
-
 // Drop-in no-op notifier so callers don't have to null-check.
 export const nullNotifier = new Notifier({transports: []});
 
-// Prefixes from our own transports / notifier internals. If a console line
-// starts with one of these, we don't re-forward it through the notifier or we
-// get an infinite loop (transport logs → wrapped console → notifier → transport).
-export const CONSOLE_WRAP_SKIP_PREFIXES = [
-    "[ApiTransport]",
-    "[Discord]",
-    "[HealthPinger]",
-    "[Notifier]",
-    "[Notify]",
-    "[sdNotify]",
-];
+export const CONSOLE_WRAP_SKIP_PREFIXES = ["[ApiTransport]", "[Notifier]"];
 
-function formatConsoleArg(a) {
-    if (typeof a === "string") return a;
-    if (a == null) return String(a);
-    if (a instanceof Error) return a.stack ? a.stack.split("\n").slice(0, 4).join("\n") : `${a.name}: ${a.message}`;
-    try { return JSON.stringify(a); }
-    catch { return String(a); }
-}
-
-// Tee every console.{log,info,warn,error} call through the notifier so all
-// terminal output also flows to whatever transports are wired up (Discord, an
-// API endpoint, etc.). Original console methods are still invoked so the
-// terminal looks unchanged.
-//
-// Lines whose first arg starts with a known internal prefix
-// (CONSOLE_WRAP_SKIP_PREFIXES) are printed but NOT forwarded, to avoid feedback
-// loops when a transport itself logs.
-//
-// Returns a restore() function so tests (and `process.on("exit")`) can unhook.
-export function wrapConsoleForNotifier(notifier, options = {}) {
-    const skipPrefixes = options.skipPrefixes ?? CONSOLE_WRAP_SKIP_PREFIXES;
-
-    // Captured by reference (not bound) so restore() puts back the *exact*
-    // original function, not a bound wrapper.
-    const orig = {
-        log:   console.log,
-        info:  console.info ?? console.log,
-        warn:  console.warn,
+export function wrapConsoleForNotifier(notifier) {
+    const origConsole = {
+        log: console.log,
+        info: console.info,
+        warn: console.warn,
         error: console.error,
     };
 
-    const shouldSkip = (args) => {
-        if (args.length === 0) return true;
-        const first = formatConsoleArg(args[0]);
-        return skipPrefixes.some(p => first.startsWith(p));
-    };
-
-    const formatLine = (args) => args.map(formatConsoleArg).join(" ");
-
-    const wrap = (level, origFn) => (...args) => {
-        origFn(...args);
-        if (shouldSkip(args)) return;
-        const line = formatLine(args);
-        // Fire-and-forget; don't block the caller and don't let a transport
-        // failure leak back up through console.*.
-        try { notifier[level](line)?.catch?.(() => {}); }
-        catch (_) {}
-    };
-
-    console.log   = wrap("info",  orig.log);
-    console.info  = wrap("info",  orig.info);
-    console.warn  = wrap("warn",  orig.warn);
-    console.error = wrap("error", orig.error);
-
-    return () => {
-        console.log   = orig.log;
-        console.info  = orig.info;
-        console.warn  = orig.warn;
-        console.error = orig.error;
-    };
-}
-
-export class JournalTransport {
-    constructor({stream = process.stdout} = {}) {
-        this.stream = stream;
+    function shouldSkip(args) {
+        if (args.length === 0) return false;
+        const first = String(args[0]);
+        return CONSOLE_WRAP_SKIP_PREFIXES.some(prefix => first.includes(prefix));
     }
 
-    send(event) {
-        // Syslog severities: 3=err, 4=warning, 6=info
-        let severity = 6;
-        if (event.level === "fatal" || event.level === "error") severity = 3;
-        else if (event.level === "warn") severity = 4;
-
-        let msg = `<${severity}>${event.subject}`;
-        if (event.details != null) {
-            try {
-                msg += " " + (typeof event.details === "object" ? JSON.stringify(event.details) : String(event.details));
-            } catch (e) {
-                msg += " [Error stringifying details]";
+    function formatArgs(args) {
+        return args.map(a => {
+            if (a instanceof Error) return a.stack || String(a);
+            if (typeof a === "object") {
+                try {
+                    return JSON.stringify(a);
+                } catch {
+                    return String(a);
+                }
             }
-        }
-
-        this.stream.write(msg + "\n");
+            return String(a);
+        }).join(" ");
     }
-}
 
-export function sdNotify(state) {
-    const socketPath = process.env.NOTIFY_SOCKET;
-    if (!socketPath) return;
+    console.log = function(...args) {
+        origConsole.log.apply(console, args);
+        if (!shouldSkip(args)) notifier.info(formatArgs(args));
+    };
 
-    import("node:dgram").then(dgram => {
-        const client = dgram.createSocket("unix_dgram");
-        const msg = Buffer.from(state);
-        client.send(msg, 0, msg.length, socketPath, (err) => {
-            if (err) console.error("[sdNotify] failed:", err);
-            client.close();
-        });
-    }).catch(err => console.error("[sdNotify] dgram import failed:", err));
+    console.info = function(...args) {
+        origConsole.info.apply(console, args);
+        if (!shouldSkip(args)) notifier.info(formatArgs(args));
+    };
+
+    console.warn = function(...args) {
+        origConsole.warn.apply(console, args);
+        if (!shouldSkip(args)) notifier.warn(formatArgs(args));
+    };
+
+    console.error = function(...args) {
+        origConsole.error.apply(console, args);
+        if (!shouldSkip(args)) notifier.error(formatArgs(args));
+    };
+
+    return function restore() {
+        console.log = origConsole.log;
+        console.info = origConsole.info;
+        console.warn = origConsole.warn;
+        console.error = origConsole.error;
+    };
 }

@@ -1,14 +1,4 @@
-// Minimal Discord bot.
-//
-// - DiscordTransport: buffers Notifier events and posts them to a channel.
-//   Flushes on demand so the process can exit cleanly.
-//
-// - HealthPinger: polls a URL on a timer and posts on status transitions
-//   (down→up, up→down). Idle when status is unchanged.
-//
-// - createDiscordBot(): wires up discord.js, builds the transport + pinger,
-//   and registers a couple of read-only slash commands (/status, /health).
-//   discord.js is loaded lazily so it isn't a required dep when unused.
+import {ApiTransport} from "./apiTransport.js";
 
 const DEFAULT_FLUSH_INTERVAL_MS = 1500;
 const DEFAULT_HEALTH_INTERVAL_MS = 60_000;
@@ -79,7 +69,7 @@ export class DiscordTransport {
 export class HealthPinger {
     constructor({url, sendFn, channelId, intervalMs = DEFAULT_HEALTH_INTERVAL_MS, timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS, label = "backend"} = {}) {
         if (!url) throw new Error("HealthPinger requires url");
-        this.url = url;
+        this.api = new ApiTransport({ baseUrl: url });
         this.sendFn = sendFn;
         this.channelId = channelId;
         this.intervalMs = intervalMs;
@@ -92,7 +82,6 @@ export class HealthPinger {
 
     start() {
         if (this.timer) return;
-        // Fire immediately so the first state transition is reported quickly.
         this._tick();
         this.timer = setInterval(() => this._tick(), this.intervalMs);
     }
@@ -111,24 +100,24 @@ export class HealthPinger {
         let up = false;
         let detail = null;
         try {
-            const res = await fetch(this.url, {signal: ac.signal});
-            up = res.ok;
-            detail = up ? null : `HTTP ${res.status}`;
+            await this.api.get("", { signal: ac.signal });
+            up = true;
+            detail = null;
         } catch (err) {
             up = false;
-            detail = err?.name === "AbortError" ? "timeout" : (err?.message || "fetch failed");
+            detail = err?.name === "AbortError" ? "timeout" : (err?.message || "request failed");
         } finally {
             clearTimeout(to);
         }
 
+        const previousFailures = this.consecutiveFailures;
         if (up) this.consecutiveFailures = 0;
         else this.consecutiveFailures++;
 
-        // Only notify on transitions. Don't spam.
         if (this.lastStatus === null) {
             await this._announce(up ? `:white_check_mark: ${this.label} is UP` : `:x: ${this.label} is DOWN (${detail})`);
         } else if (up && this.lastStatus === false) {
-            await this._announce(`:white_check_mark: ${this.label} recovered (was down ${this.consecutiveFailures} previous checks)`);
+            await this._announce(`:white_check_mark: ${this.label} recovered (was down ${previousFailures} previous checks)`);
         } else if (!up && this.lastStatus === true) {
             await this._announce(`:x: ${this.label} went DOWN (${detail})`);
         }
@@ -174,7 +163,8 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
         ? new HealthPinger({url: healthUrl, sendFn, channelId})
         : null;
 
-    // Slash commands — read-only, no state mutations.
+    const api = apiUrl ? new ApiTransport({ baseUrl: apiUrl }) : null;
+
     const commands = [
         new SlashCommandBuilder().setName("status").setDescription("Show bot status"),
         new SlashCommandBuilder().setName("health").setDescription("Ping the health endpoint now"),
@@ -207,56 +197,37 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
             if (interaction.commandName === "status") {
                 await interaction.reply("Bot online. (status endpoint not yet wired — try `/health`.)");
             } else if (interaction.commandName === "health") {
-                if (!healthUrl) {
+                if (!pinger) {
                     await interaction.reply("Health URL not configured.");
                     return;
                 }
                 await interaction.deferReply();
                 try {
-                    const res = await fetch(healthUrl);
-                    const body = await res.text();
-                    await interaction.editReply(`HTTP ${res.status}\n\`\`\`${body.slice(0, 1800)}\`\`\``);
+                    const body = await pinger.api.get("");
+                    await interaction.editReply(`HTTP 200 OK\n\`\`\`${String(body).slice(0, 1800)}\`\`\``);
                 } catch (err) {
                     await interaction.editReply(`Health check failed: ${err.message}`);
                 }
             } else if (interaction.commandName === "analysis") {
-                if (!apiUrl) return interaction.reply("API URL not configured.");
+                if (!api) return interaction.reply("API URL not configured.");
                 await interaction.deferReply();
                 try {
                     const fen = interaction.options.getString("fen");
                     const depth = interaction.options.getInteger("depth") || 10;
                     
-                    const res = await fetch(`${apiUrl}/engine/analysis`, {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({fen, depth}),
-                    });
-                    const data = await res.json();
-                    
-                    if (!res.ok) {
-                        return interaction.editReply(`Analysis failed: ${data.error}`);
-                    }
+                    const data = await api.post("/engine/analysis", {fen, depth});
                     await interaction.editReply(`**Analysis Complete (Depth ${data.depth})**\n\`\`\`json\n${safeJson(data.bestMove)}\n\`\`\``);
                 } catch (err) {
                     await interaction.editReply(`Analysis failed: ${err.message}`);
                 }
             } else if (interaction.commandName === "bench") {
-                if (!apiUrl) return interaction.reply("API URL not configured.");
+                if (!api) return interaction.reply("API URL not configured.");
                 await interaction.deferReply();
                 try {
                     const mode = interaction.options.getString("mode") || "depth";
                     const depth = interaction.options.getInteger("depth") || 9;
                     
-                    const res = await fetch(`${apiUrl}/engine/bench`, {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({mode, depth}),
-                    });
-                    const data = await res.json();
-                    
-                    if (!res.ok) {
-                        return interaction.editReply(`Benchmark failed: ${data.error || "Unknown"}`);
-                    }
+                    const data = await api.post("/engine/bench", {mode, depth});
                     await interaction.editReply(`**Benchmark Complete**\n\`\`\`json\n${safeJson(data.data)}\n\`\`\``);
                 } catch (err) {
                     await interaction.editReply(`Benchmark failed: ${err.message}`);

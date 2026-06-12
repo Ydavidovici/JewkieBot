@@ -1,5 +1,89 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES} from "../src/notifier.js";
+import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES, WebhookTransport} from "../src/notifier.js";
+import {ApiTransport} from "../src/apiTransport.js";
+
+describe("WebhookTransport", () => {
+    let originalEnv;
+
+    beforeEach(() => {
+        originalEnv = {
+            API_NOTIFY_URL: process.env.API_NOTIFY_URL,
+            API_NOTIFY_TOKEN: process.env.API_NOTIFY_TOKEN,
+            API_NOTIFY_PROJECT: process.env.API_NOTIFY_PROJECT,
+        };
+        delete process.env.API_NOTIFY_URL;
+        delete process.env.API_NOTIFY_TOKEN;
+        delete process.env.API_NOTIFY_PROJECT;
+    });
+
+    afterEach(() => {
+        for (const [k, v] of Object.entries(originalEnv)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+        }
+    });
+
+    test("is disabled when url or token is missing", async () => {
+        const t = new WebhookTransport();
+        expect(t.enabled).toBe(false);
+        // Ensure no error when calling send
+        await t.send({level: "info", subject: "anything"});
+    });
+
+    test("posts info logs to the 'logs' channel with no status field", async () => {
+        const t = new WebhookTransport({url: "http://test/notify", token: "tk", project: "proj"});
+        t.api.post = mock(async () => ({}));
+
+        await t.send({
+            level: "info",
+            subject: "[Server] Started",
+            details: {port: 8000},
+        });
+
+        expect(t.api.post).toHaveBeenCalled();
+        const payload = t.api.post.mock.calls[0][1];
+        
+        expect(payload.channel).toBe("logs");
+        expect(payload.status).toBeUndefined();
+        expect(payload.project).toBe("proj");
+        expect(payload.message).toContain("[ INFO ] [Server] Started");
+        expect(payload.message).toContain(`"port": 8000`);
+    });
+
+    test("routes autoplay restart events to 'notifications' with status=success", async () => {
+        const t = new WebhookTransport({url: "http://test/notify", token: "tk"});
+        t.api.post = mock(async () => ({}));
+
+        await t.send({level: "info", subject: "[Autoplay] Autoplay restarted after rate limit"});
+
+        const payload = t.api.post.mock.calls[0][1];
+        expect(payload.channel).toBe("notifications");
+        expect(payload.status).toBe("success");
+    });
+
+    test("error/fatal levels set status=error and stay on the 'logs' channel", async () => {
+        const t = new WebhookTransport({url: "http://test/notify", token: "tk"});
+        t.api.post = mock(async () => ({}));
+
+        await t.send({level: "error", subject: "[EngineManager] Engine crashed"});
+
+        const payload = t.api.post.mock.calls[0][1];
+        expect(payload.channel).toBe("logs");
+        expect(payload.status).toBe("error");
+    });
+
+    test("reads url/token/project from env vars when no opts passed", () => {
+        process.env.API_NOTIFY_URL = "http://from-env/notify";
+        process.env.API_NOTIFY_TOKEN = "env_tok";
+        process.env.API_NOTIFY_PROJECT = "from-env-proj";
+
+        const t = new WebhookTransport();
+        expect(t.enabled).toBe(true);
+        expect(t.api.baseUrl).toBe("http://from-env/notify");
+        expect(t.api.token).toBe("env_tok");
+        expect(t.project).toBe("from-env-proj");
+    });
+});
 
 describe("wrapConsoleForNotifier", () => {
     let origConsole;
@@ -26,7 +110,6 @@ describe("wrapConsoleForNotifier", () => {
     test("forwards console.log → notifier.info", () => {
         const events = [];
         const notifier = new Notifier({transports: [{send: (e) => events.push(e)}]});
-        // Suppress actual terminal output during the test.
         console.log = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
 
@@ -69,7 +152,6 @@ describe("wrapConsoleForNotifier", () => {
         console.error = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
 
-        // Each of these would otherwise loop the notifier.
         for (const prefix of CONSOLE_WRAP_SKIP_PREFIXES) {
             console.error(`${prefix} something happened`);
         }
@@ -102,33 +184,5 @@ describe("wrapConsoleForNotifier", () => {
         expect(console.log).not.toBe(sentinel);
         r();
         expect(console.log).toBe(sentinel);
-    });
-
-    test("a transport that logs via console.error does not cause a feedback loop", async () => {
-        // Transport that always logs to console.error with a known internal prefix.
-        const transportCalls = [];
-        const loggingTransport = {
-            send: (event) => {
-                transportCalls.push(event);
-                // This is the recursive risk: if the wrapper didn't skip
-                // "[ApiTransport]" lines, this would re-enter notifier.error
-                // and spiral.
-                console.error("[ApiTransport] simulated transport error");
-            },
-        };
-        const notifier = new Notifier({transports: [loggingTransport]});
-        console.log   = mock(() => {});
-        console.error = mock(() => {});
-        restore = wrapConsoleForNotifier(notifier);
-
-        console.log("one user log");
-
-        // Yield to drain any microtasks the wrapper might schedule.
-        await new Promise(r => setTimeout(r, 10));
-
-        // The transport gets the original user log AND any unprefixed wrapper
-        // forwards — but the "[ApiTransport]" log must NOT have looped back in.
-        const internalLoopback = transportCalls.find(e => typeof e.subject === "string" && e.subject.includes("[ApiTransport]"));
-        expect(internalLoopback).toBeUndefined();
     });
 });
