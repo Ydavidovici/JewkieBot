@@ -6,6 +6,7 @@ import Game from "./pages/Game.jsx";
 import BenchmarkControl from "./pages/BenchmarkControl.jsx";
 import LichessPage from "./pages/LichessPage.jsx";
 import AnalysisPage from "./pages/AnalysisPage.jsx";
+import TasksPage from "./pages/TasksPage.jsx";
 
 export default function App() {
     return (
@@ -16,6 +17,7 @@ export default function App() {
                 <Route path="/game" element={<Game/>} />
                 <Route path="/benchmark" element={<BenchmarkControl/>} />
                 <Route path="/lichess" element={<LichessPage/>} />
+                <Route path="/tasks" element={<TasksPage/>} />
             </Route>
         </Routes>
     );

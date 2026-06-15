@@ -6,6 +6,10 @@ import {LichessBot} from "./lichessBot.js";
 import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.js";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {OPENINGS} from "./openings.js";
+import { chessComController } from "./controllers/chessComController.js";
+import { tournamentController } from "./controllers/tournamentController.js";
+import { pgnController } from "./controllers/pgnController.js";
+import { tasksController } from "./controllers/tasksController.js";
 
 export function createApp({manager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null} = {}) {
     const app = express();
@@ -312,6 +316,87 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         res.json({running: analyzer.isRunning, progress: analyzer.progress});
     });
 
+    app.post("/api/analysis/start", async (req, res) => {
+        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
+        if (analyzer.isRunning) return res.status(400).json({error: "Analysis already running"});
+        
+        try {
+            const { playerName } = req.body;
+            const taskId = `analysis-${Date.now()}`;
+            tasksController._taskManager = (await import("./taskManager.js")).taskManager;
+            tasksController._taskManager.createTask(taskId, "teacher_analysis", { playerName });
+
+            res.json({ status: "started", taskId });
+
+            (async () => {
+                try {
+                    // Update progress periodically
+                    const interval = setInterval(() => {
+                        if (analyzer.isRunning) {
+                            tasksController._taskManager.updateTaskProgress(taskId, analyzer.progress);
+                        }
+                    }, 2000);
+
+                    await analyzer.analyzeAll(playerName || null);
+                    clearInterval(interval);
+                    
+                    tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", { 
+                        gamesAnalyzed: analyzer.progress.done 
+                    });
+                } catch (err) {
+                    tasksController._taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                }
+            })();
+        } catch (err) {
+            res.status(500).json({error: err.message});
+        }
+    });
+
+    app.post("/api/analysis/stop", async (req, res) => {
+        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
+        try {
+            await analyzer.stop();
+            res.json({ status: "stopped" });
+        } catch (err) {
+            res.status(500).json({error: err.message});
+        }
+    });
+
+    app.post("/api/engine/build", async (req, res) => {
+        try {
+            const taskId = `build-engine-${Date.now()}`;
+            const { taskManager } = await import("./taskManager.js");
+            taskManager.createTask(taskId, "engine_build", {});
+
+            res.json({ status: "started", taskId });
+
+            (async () => {
+                try {
+                    const { spawn } = await import("child_process");
+                    const buildScript = path.join(process.cwd(), "src", "scripts", "buildEngine.js");
+                    
+                    const child = spawn("bun", [buildScript], { cwd: path.join(process.cwd(), "src", "scripts") });
+                    
+                    let output = "";
+                    child.stdout.on("data", data => output += data.toString());
+                    child.stderr.on("data", data => output += data.toString());
+                    
+                    child.on("close", code => {
+                        if (code === 0) {
+                            taskManager.updateTaskStatus(taskId, "COMPLETED", { output });
+                        } else {
+                            taskManager.updateTaskStatus(taskId, "FAILED", { error: `Exit code ${code}`, output });
+                        }
+                    });
+                } catch (err) {
+                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                }
+            })();
+        } catch (err) {
+            res.status(500).json({error: err.message});
+        }
+    });
+
     app.get("/api/analysis/stats", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
 
@@ -323,6 +408,21 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
             res.status(500).json({error: err.message});
         }
     });
+
+    // Chess.com
+    app.post("/api/chesscom/fetch", chessComController.fetchUserGames);
+
+    // Cutechess
+    app.post("/api/cutechess/gauntlet", tournamentController.runGauntlet);
+    app.post("/api/cutechess/selfplay", tournamentController.runSelfPlay);
+
+    // PGN Ingestion
+    app.post("/api/pgn/ingest", pgnController.ingestString);
+    app.post("/api/pgn/ingest-file", pgnController.ingestFile);
+
+    // Tasks Status
+    app.get("/api/tasks", tasksController.getAllTasks);
+    app.get("/api/tasks/:id", tasksController.getTask);
 
     const distPath = path.resolve(import.meta.dir, "../../frontend/dist");
     app.use(express.static(distPath));
