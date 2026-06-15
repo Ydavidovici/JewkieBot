@@ -3,8 +3,7 @@ import cors from "cors";
 import path from "node:path";
 import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.js";
 import {LichessBot} from "./lichessBot.js";
-import {Notifier, nullNotifier, wrapConsoleForNotifier} from "./notifier.js";
-import {ApiTransport} from "./apiTransport.js";
+import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.js";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {OPENINGS} from "./openings.js";
 
@@ -371,12 +370,12 @@ if (import.meta.main) {
     console.log(`♟️  Engine Path: ${JEWKIEBOT_PATH}`);
 
     const transports = [];
-    const apiTransport = new ApiTransport();
-    if (apiTransport.enabled) {
-        transports.push(apiTransport);
-        console.log(`[Server] ApiTransport enabled → ${apiTransport.url}`);
+    const webhookTransport = new WebhookTransport();
+    if (webhookTransport.enabled) {
+        transports.push(webhookTransport);
+        console.log(`[Server] WebhookTransport enabled → ${webhookTransport.api.baseUrl}`);
     } else {
-        console.log("[Server] ApiTransport disabled (set API_NOTIFY_URL + API_NOTIFY_TOKEN to enable).");
+        console.log("[Server] WebhookTransport disabled (set API_NOTIFY_URL + API_NOTIFY_TOKEN to enable).");
     }
     const notifier = new Notifier({transports});
     const restoreConsole = wrapConsoleForNotifier(notifier);

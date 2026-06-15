@@ -52,8 +52,37 @@ export class WebhookTransport {
     }
 }
 
+export class ConsoleTransport {
+    constructor() {
+        // Grab the original console methods in case they get wrapped later
+        this.log = console.log;
+        this.warn = console.warn;
+        this.error = console.error;
+    }
+
+    send(event) {
+        const levelStr = String(event.level ?? "info").toUpperCase();
+        let bodyText = `[ ${levelStr} ] ${event.subject}`;
+        if (event.details != null && (typeof event.details !== "object" || Object.keys(event.details).length > 0)) {
+            try {
+                bodyText += " " + (typeof event.details === "object"
+                    ? JSON.stringify(event.details)
+                    : String(event.details));
+            } catch (_) {}
+        }
+        
+        if (event.level === "error" || event.level === "fatal") {
+            this.error(bodyText);
+        } else if (event.level === "warn") {
+            this.warn(bodyText);
+        } else {
+            this.log(bodyText);
+        }
+    }
+}
+
 export class Notifier extends EventEmitter {
-    constructor({minLevel = LEVELS.INFO, transports = [new WebhookTransport()]} = {}) {
+    constructor({minLevel = LEVELS.INFO, transports = [new WebhookTransport(), new ConsoleTransport()]} = {}) {
         super();
         this.minLevel = minLevel;
         this.transports = [];
