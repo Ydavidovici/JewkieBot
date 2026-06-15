@@ -182,17 +182,17 @@ export const setEngineOption = (name, value, baseUrl = null) =>
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://localhost:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
     });
 
 export const getGameEvals = (gameId, dbUrl = null) =>
     request(`/api/v1/chess/games/${gameId}/evals`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://localhost:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
     });
 
 export const getGameMoves = (gameId, dbUrl = null) =>
     request(`/api/v1/chess/games/${gameId}/moves`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://localhost:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
     });

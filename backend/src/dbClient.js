@@ -2,7 +2,7 @@ import {ApiTransport} from "./apiTransport.js";
 import {nullNotifier} from "./notifier.js";
 
 const transport = new ApiTransport({
-    baseUrl: process.env.DB_SERVICE_URL || "http://localhost:4001/api/v1/chess",
+    baseUrl: process.env.DB_SERVICE_URL || "http://192.168.1.51:4001/api/v1/chess",
     notifier: nullNotifier,
     unwrapData: true,
 });
