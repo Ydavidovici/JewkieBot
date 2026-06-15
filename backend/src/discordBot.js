@@ -19,10 +19,7 @@ export class DiscordTransport {
     }
 
     send(event) {
-        const line = `${LEVEL_EMOJI[event.level] ?? ""} **${event.level.toUpperCase()}** — ${event.subject}${
-            event.details ? `\n\`\`\`${safeJson(event.details).slice(0, 1500)}\`\`\`` : ""
-        }`;
-        this.buffer.push(line);
+        this.buffer.push(event);
         this._scheduleFlush();
     }
 
@@ -41,26 +38,47 @@ export class DiscordTransport {
         }
         if (this.buffer.length === 0) return;
 
-        // Discord caps a single message at 2000 chars — batch greedily.
+        let EmbedBuilder;
+        try {
+            const discord = await import("discord.js");
+            EmbedBuilder = discord.EmbedBuilder;
+        } catch (err) {
+            console.error("[Discord] Cannot flush embeds without discord.js", err);
+            return;
+        }
+
         const drained = this.buffer.splice(0);
-        const chunks = [];
-        let current = "";
-        for (const line of drained) {
-            if (current.length + line.length + 1 > 1900) {
-                if (current) chunks.push(current);
-                current = line;
-            } else {
-                current = current ? `${current}\n${line}` : line;
+        const embedChunks = [];
+        let currentChunk = [];
+
+        for (const event of drained) {
+            const embed = new EmbedBuilder()
+                .setTitle(`${LEVEL_EMOJI[event.level] ?? ""} ${event.level.toUpperCase()} — ${String(event.subject).slice(0, 250)}`)
+                .setTimestamp(event.timestamp ? new Date(event.timestamp) : new Date());
+
+            if (event.level === "error" || event.level === "fatal") embed.setColor(0xFF0000);
+            else if (event.level === "warn") embed.setColor(0xFFA500);
+            else embed.setColor(0x00FF00);
+
+            if (event.details != null && (typeof event.details !== "object" || Object.keys(event.details).length > 0)) {
+                const detailsStr = safeJson(event.details).slice(0, 4000);
+                embed.setDescription(`\`\`\`json\n${detailsStr}\n\`\`\``);
+            }
+
+            currentChunk.push(embed);
+            if (currentChunk.length === 10) {
+                embedChunks.push(currentChunk);
+                currentChunk = [];
             }
         }
-        if (current) chunks.push(current);
 
-        for (const chunk of chunks) {
+        if (currentChunk.length > 0) embedChunks.push(currentChunk);
+
+        for (const embeds of embedChunks) {
             try {
-                await this.sendFn(this.channelId, chunk);
+                await this.sendFn(this.channelId, { embeds });
             } catch (err) {
                 console.error("[Discord] Send failed:", err);
-                // Don't requeue — avoid an infinite-retry loop if the channel is busted.
             }
         }
     }
