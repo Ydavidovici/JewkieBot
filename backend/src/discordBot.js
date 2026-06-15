@@ -178,6 +178,12 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
             .setDescription("Run a quick engine benchmark")
             .addStringOption(opt => opt.setName("mode").setDescription("depth or time").setRequired(false))
             .addIntegerOption(opt => opt.setName("depth").setDescription("Search depth").setRequired(false)),
+        new SlashCommandBuilder()
+            .setName("lichess")
+            .setDescription("Manage the Lichess bot")
+            .addSubcommand(sub => sub.setName("start").setDescription("Start the Lichess bot"))
+            .addSubcommand(sub => sub.setName("stop").setDescription("Stop the Lichess bot"))
+            .addSubcommand(sub => sub.setName("status").setDescription("Check Lichess bot status")),
     ].map(c => c.toJSON());
 
     client.once(Events.ClientReady, async (c) => {
@@ -231,6 +237,25 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
                     await interaction.editReply(`**Benchmark Complete**\n\`\`\`json\n${safeJson(data.data)}\n\`\`\``);
                 } catch (err) {
                     await interaction.editReply(`Benchmark failed: ${err.message}`);
+                }
+            } else if (interaction.commandName === "lichess") {
+                if (!api) return interaction.reply("API URL not configured.");
+                await interaction.deferReply();
+                try {
+                    const sub = interaction.options.getSubcommand();
+                    if (sub === "start") {
+                        const data = await api.post("/lichess/start");
+                        await interaction.editReply(data.message || data.status || "Started.");
+                    } else if (sub === "stop") {
+                        const data = await api.post("/lichess/stop");
+                        await interaction.editReply(data.message || data.status || "Stopped.");
+                    } else if (sub === "status") {
+                        const data = await api.get("/lichess/status");
+                        await interaction.editReply(`**Lichess Bot Status**\nRunning: ${data.running ? ":white_check_mark: Yes" : ":x: No"}\nActive Games: ${data.activeGames?.length || 0}\nRate Limited: ${data.rateLimitedFor > 0 ? `Yes (${data.rateLimitedFor}s)` : "No"}`);
+                    }
+                } catch (err) {
+                    const sub = interaction.options.getSubcommand();
+                    await interaction.editReply(`Lichess \`${sub}\` failed: ${err.message}`);
                 }
             }
         } catch (err) {
