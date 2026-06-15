@@ -429,7 +429,7 @@ if (import.meta.main) {
 
     const PORT = process.env.PORT || 8000;
 
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
         console.log(`Backend listening on http://localhost:${PORT}`);
         notifier.info("[Server] Backend started", {
             port: PORT,
