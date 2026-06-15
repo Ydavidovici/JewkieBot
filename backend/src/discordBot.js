@@ -60,9 +60,20 @@ export class DiscordTransport {
             else if (event.level === "warn") embed.setColor(0xFFA500);
             else embed.setColor(0x00FF00);
 
-            if (event.details != null && (typeof event.details !== "object" || Object.keys(event.details).length > 0)) {
-                const detailsStr = safeJson(event.details).slice(0, 4000);
-                embed.setDescription(`\`\`\`json\n${detailsStr}\n\`\`\``);
+            if (event.details != null) {
+                if (typeof event.details === "object" && Object.keys(event.details).length > 0) {
+                    const fields = [];
+                    for (const [k, v] of Object.entries(event.details)) {
+                        let valStr = typeof v === "object" ? safeJson(v) : String(v);
+                        if (valStr.trim() === "") valStr = "\u200b";
+                        if (valStr.length > 1024) valStr = valStr.slice(0, 1021) + "...";
+                        fields.push({ name: String(k).slice(0, 256) || "\u200b", value: valStr, inline: true });
+                    }
+                    if (fields.length > 0) embed.addFields(fields.slice(0, 25));
+                } else if (typeof event.details !== "object") {
+                    const detailsStr = String(event.details).slice(0, 4000);
+                    embed.setDescription(detailsStr);
+                }
             }
 
             currentChunk.push(embed);
