@@ -53,28 +53,21 @@ export class DiscordTransport {
 
         for (const event of drained) {
             const embed = new EmbedBuilder()
-                .setTitle(`${LEVEL_EMOJI[event.level] ?? ""} ${event.level.toUpperCase()} — ${String(event.subject).slice(0, 250)}`)
                 .setTimestamp(event.timestamp ? new Date(event.timestamp) : new Date());
 
             if (event.level === "error" || event.level === "fatal") embed.setColor(0xFF0000);
             else if (event.level === "warn") embed.setColor(0xFFA500);
             else embed.setColor(0x00FF00);
 
-            if (event.details != null) {
-                if (typeof event.details === "object" && Object.keys(event.details).length > 0) {
-                    const fields = [];
-                    for (const [k, v] of Object.entries(event.details)) {
-                        let valStr = typeof v === "object" ? safeJson(v) : String(v);
-                        if (valStr.trim() === "") valStr = "\u200b";
-                        if (valStr.length > 1024) valStr = valStr.slice(0, 1021) + "...";
-                        fields.push({ name: String(k).slice(0, 256) || "\u200b", value: valStr, inline: true });
-                    }
-                    if (fields.length > 0) embed.addFields(fields.slice(0, 25));
-                } else if (typeof event.details !== "object") {
-                    const detailsStr = String(event.details).slice(0, 4000);
-                    embed.setDescription(detailsStr);
-                }
+            embed.setTitle(`${LEVEL_EMOJI[event.level] ?? ""} ${event.level.toUpperCase()}`);
+
+            let desc = `**${String(event.subject).slice(0, 250)}**`;
+
+            if (event.details != null && (typeof event.details !== "object" || Object.keys(event.details).length > 0)) {
+                const detailsStr = safeJson(event.details).slice(0, 3500);
+                desc += `\n\`\`\`json\n${detailsStr}\n\`\`\``;
             }
+            embed.setDescription(desc);
 
             currentChunk.push(embed);
             if (currentChunk.length === 10) {
