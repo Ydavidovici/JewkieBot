@@ -324,27 +324,27 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
             const { playerName } = req.body;
             const taskId = `analysis-${Date.now()}`;
             tasksController._taskManager = (await import("./taskManager.js")).taskManager;
-            tasksController._taskManager.createTask(taskId, "teacher_analysis", { playerName });
+            await tasksController._taskManager.createTask(taskId, "teacher_analysis", { playerName });
 
             res.json({ status: "started", taskId });
 
             (async () => {
                 try {
                     // Update progress periodically
-                    const interval = setInterval(() => {
+                    const interval = setInterval(async () => {
                         if (analyzer.isRunning) {
-                            tasksController._taskManager.updateTaskProgress(taskId, analyzer.progress);
+                            await tasksController._taskManager.updateTaskProgress(taskId, analyzer.progress);
                         }
                     }, 2000);
 
                     await analyzer.analyzeAll(playerName || null);
                     clearInterval(interval);
                     
-                    tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", { 
+                    await tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", { 
                         gamesAnalyzed: analyzer.progress.done 
                     });
                 } catch (err) {
-                    tasksController._taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await tasksController._taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 }
             })();
         } catch (err) {
@@ -366,7 +366,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         try {
             const taskId = `build-engine-${Date.now()}`;
             const { taskManager } = await import("./taskManager.js");
-            taskManager.createTask(taskId, "engine_build", {});
+            await taskManager.createTask(taskId, "engine_build", {});
 
             res.json({ status: "started", taskId });
 
@@ -381,15 +381,15 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
                     child.stdout.on("data", data => output += data.toString());
                     child.stderr.on("data", data => output += data.toString());
                     
-                    child.on("close", code => {
+                    child.on("close", async code => {
                         if (code === 0) {
-                            taskManager.updateTaskStatus(taskId, "COMPLETED", { output });
+                            await taskManager.updateTaskStatus(taskId, "COMPLETED", { output });
                         } else {
-                            taskManager.updateTaskStatus(taskId, "FAILED", { error: `Exit code ${code}`, output });
+                            await taskManager.updateTaskStatus(taskId, "FAILED", { error: `Exit code ${code}`, output });
                         }
                     });
                 } catch (err) {
-                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 }
             })();
         } catch (err) {

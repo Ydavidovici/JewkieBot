@@ -58,3 +58,29 @@ export const dbClient = {
     },
 };
 
+const taskTransport = new ApiTransport({
+    baseUrl: (process.env.DB_SERVICE_URL || "http://192.168.1.51:4001/api/v1/chess").replace("/chess", "/tasks"),
+    notifier: nullNotifier,
+    unwrapData: true,
+});
+
+export const taskClient = {
+    async createTask(payload) {
+        return taskTransport.post("/", payload);
+    },
+
+    async getTasks(consumerId) {
+        let url = "/";
+        if (consumerId) url += `?consumer_id=${encodeURIComponent(consumerId)}`;
+        return taskTransport.get(url);
+    },
+
+    async getTaskById(id) {
+        return taskTransport.get(`/${id}`);
+    },
+
+    async updateTask(id, updates) {
+        return taskTransport.patch(`/${id}`, updates);
+    }
+};
+

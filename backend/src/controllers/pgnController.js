@@ -11,8 +11,8 @@ export const pgnController = {
                 return res.status(400).json({ error: "pgn string is required" });
             }
 
-            const taskId = `pgn-ingest-${Date.now()}`;
-            taskManager.createTask(taskId, "pgn_ingestion", { type: "string", length: pgn.length });
+            const taskId = `pgn-string-${Date.now()}`;
+            await taskManager.createTask(taskId, "pgn_ingestion", { type: "string", length: pgn.length });
 
             res.json({ status: "started", taskId });
 
@@ -21,10 +21,10 @@ export const pgnController = {
                 try {
                     const pgnManager = new PgnManager(dbClient);
                     const result = await pgnManager.ingestPgnString(pgn);
-                    taskManager.updateTaskStatus(taskId, "COMPLETED", result);
+                    await taskManager.updateTaskStatus(taskId, "COMPLETED", result);
                 } catch (err) {
                     console.error(`[PGN Ingest ${taskId}] Failed:`, err);
-                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 }
             })();
         } catch (err) {
@@ -39,8 +39,8 @@ export const pgnController = {
                 return res.status(400).json({ error: "Valid filePath is required" });
             }
 
-            const taskId = `pgn-ingest-${Date.now()}`;
-            taskManager.createTask(taskId, "pgn_ingestion", { type: "file", filePath });
+            const taskId = `pgn-file-${Date.now()}`;
+            await taskManager.createTask(taskId, "pgn_ingestion", { type: "file", filePath });
 
             res.json({ status: "started", taskId });
 
@@ -49,10 +49,10 @@ export const pgnController = {
                 try {
                     const pgnManager = new PgnManager(dbClient);
                     const result = await pgnManager.ingestPgnFile(filePath);
-                    taskManager.updateTaskStatus(taskId, "COMPLETED", result);
+                    await taskManager.updateTaskStatus(taskId, "COMPLETED", result);
                 } catch (err) {
                     console.error(`[PGN Ingest ${taskId}] Failed:`, err);
-                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 }
             })();
         } catch (err) {

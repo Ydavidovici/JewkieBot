@@ -18,7 +18,7 @@ export const tournamentController = {
             const { myEngine, opponents, tc, games, concurrency, preset } = req.body;
             
             const taskId = `tourney-${Date.now()}`;
-            taskManager.createTask(taskId, "tournament", req.body);
+            await taskManager.createTask(taskId, "tournament", req.body);
 
             res.json({ status: "started", taskId });
 
@@ -35,7 +35,7 @@ export const tournamentController = {
                     const text = chunk.toString();
                     if (text.includes("Finished game")) {
                         completedGames++;
-                        taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
+                        await taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
                     }
                     return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
                 };
@@ -79,14 +79,14 @@ export const tournamentController = {
                     const pgnContent = fs.readFileSync(resultPgn, "utf-8");
                     const ingestResults = await pgnManager.ingestPgnString(pgnContent);
 
-                    taskManager.updateTaskStatus(taskId, "COMPLETED", { 
+                    await taskManager.updateTaskStatus(taskId, "COMPLETED", { 
                         pgnFile: resultPgn, 
                         ingested: ingestResults.success,
                         failed: ingestResults.failed
                     });
                 } catch (err) {
                     console.error(`[Tournament ${taskId}] Failed:`, err);
-                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 } finally {
                     process.stdout.write = originalStdoutWrite;
                 }
@@ -102,7 +102,7 @@ export const tournamentController = {
             const { v1, v2, tc, games, depth, nodes } = req.body;
             
             const taskId = `selfplay-${Date.now()}`;
-            taskManager.createTask(taskId, "selfplay", req.body);
+            await taskManager.createTask(taskId, "selfplay", req.body);
 
             res.json({ status: "started", taskId });
 
@@ -116,7 +116,7 @@ export const tournamentController = {
                     const text = chunk.toString();
                     if (text.includes("Finished game")) {
                         completedGames++;
-                        taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
+                        await taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
                     }
                     return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
                 };
@@ -158,13 +158,13 @@ export const tournamentController = {
                     const pgnContent = fs.readFileSync(resultPgn, "utf-8");
                     const ingestResults = await pgnManager.ingestPgnString(pgnContent);
 
-                    taskManager.updateTaskStatus(taskId, "COMPLETED", { 
+                    await taskManager.updateTaskStatus(taskId, "COMPLETED", { 
                         pgnFile: resultPgn,
                         ingested: ingestResults.success
                     });
                 } catch (err) {
                     console.error(`[SelfPlay ${taskId}] Failed:`, err);
-                    taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
                 } finally {
                     process.stdout.write = originalStdoutWrite;
                 }

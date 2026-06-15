@@ -1,46 +1,31 @@
-const activeTasks = new Map();
+import { taskClient } from "./dbClient.js";
+
+const CONSUMER_ID = "jewkiebot";
 
 export const taskManager = {
-    createTask(id, type, payload = {}) {
-        const task = {
+    async createTask(id, type, payload = {}) {
+        return taskClient.createTask({
             id,
+            consumer_id: CONSUMER_ID,
             type,
             status: "RUNNING",
-            payload,
-            progress: null,
-            result: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-        activeTasks.set(id, task);
-        return task;
+            payload
+        });
     },
 
-    updateTaskStatus(id, status, result = null) {
-        const task = activeTasks.get(id);
-        if (task) {
-            task.status = status;
-            if (result) task.result = result;
-            task.updatedAt = new Date().toISOString();
-        }
+    async updateTaskStatus(id, status, result = null) {
+        return taskClient.updateTask(id, { status, result });
     },
 
-    updateTaskProgress(id, progress) {
-        const task = activeTasks.get(id);
-        if (task) {
-            task.progress = progress;
-            task.updatedAt = new Date().toISOString();
-        }
+    async updateTaskProgress(id, progress) {
+        return taskClient.updateTask(id, { progress });
     },
 
-    getTask(id) {
-        return activeTasks.get(id) || null;
+    async getTask(id) {
+        return taskClient.getTaskById(id);
     },
 
-    getAllTasks() {
-        const tasks = Array.from(activeTasks.values());
-        // Sort newest first
-        tasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        return tasks;
+    async getAllTasks() {
+        return taskClient.getTasks(CONSUMER_ID);
     }
 };
