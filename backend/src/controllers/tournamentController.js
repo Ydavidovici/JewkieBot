@@ -35,7 +35,7 @@ export const tournamentController = {
                     const text = chunk.toString();
                     if (text.includes("Finished game")) {
                         completedGames++;
-                        await taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
+                        taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games }).catch(console.error);
                     }
                     return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
                 };
@@ -116,7 +116,7 @@ export const tournamentController = {
                     const text = chunk.toString();
                     if (text.includes("Finished game")) {
                         completedGames++;
-                        await taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games });
+                        taskManager.updateTaskProgress(taskId, { completed: completedGames, total: games }).catch(console.error);
                     }
                     return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
                 };
