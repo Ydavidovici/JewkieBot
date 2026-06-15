@@ -3,16 +3,19 @@ import { health, getLichessStatus } from "../services/api.js";
 
 const BotContext = createContext(null);
 
+const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const isCloud = hostname === 'jewkiebot.dev';
+
 const URLS = {
-    'prod': 'https://jewkiebot.dev',
-    'dev': 'https://jewkiebot.dev/dev',
-    'local': 'http://localhost:8000',
+    'prod': isCloud ? 'https://jewkiebot.dev' : `http://${hostname}:8000`,
+    'dev': isCloud ? 'https://jewkiebot.dev/dev' : `http://${hostname}:8001`,
+    'local': `http://${hostname}:8000`,
 };
 
 const DB_URLS = {
-    'prod': 'https://jewkiebot.dev', // Assuming db-service is accessible here
-    'dev': 'https://jewkiebot.dev/dev',
-    'local': 'http://192.168.1.51:4001',
+    'prod': isCloud ? 'https://jewkiebot.dev' : `http://${hostname}:4001`,
+    'dev': isCloud ? 'https://jewkiebot.dev/dev' : `http://${hostname}:4001`,
+    'local': `http://${hostname}:4001`,
 };
 
 export const BotProvider = ({ children }) => {
