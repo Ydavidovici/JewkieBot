@@ -79,7 +79,7 @@ export default function AnalysisPage() {
         if (game) return game.fen();
         if (customFens.length === 0) return "start";
         if (currentPly === 0) return "start";
-        return customFens[currentPly - 1];
+        return customFens[currentPly - 1] || "start";
     };
 
     useEffect(() => {
