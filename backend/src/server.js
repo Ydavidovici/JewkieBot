@@ -114,8 +114,11 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
 
     app.get("/api/engine/stream", async (req, res) => {
         try {
-            const fen = req.query.fen || "startpos";
-            const depth = req.query.depth || 20;
+            let fen = req.query.fen || "startpos";
+            if (fen === "start") {
+                fen = "startpos";
+            }
+            const depth = parseInt(req.query.depth) || 20;
 
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache");

@@ -102,9 +102,21 @@ export default function AnalysisPage() {
             const history = [];
             const fens = [];
             
+            const tempGame = new Chess();
             for (const m of moves) {
                 history.push(m.uci);
-                fens.push(m.fen_after);
+                
+                try {
+                    tempGame.move(m.uci);
+                } catch (e) {
+                    console.error("Invalid move", m.uci, tempGame.fen());
+                }
+
+                if (m.fen_after) {
+                    fens.push(m.fen_after);
+                } else {
+                    fens.push(tempGame.fen());
+                }
             }
             
             const evalsMap = {};
