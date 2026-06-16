@@ -166,8 +166,25 @@ export default function AnalysisPage() {
     };
 
     // Calculate current evaluation to show in bar
-    const currentEval = evals[currentPly]?.best_cp || 0;
-    const isMate = evals[currentPly]?.is_mate;
+    let currentEval = evals[currentPly]?.best_cp || 0;
+    let isMate = evals[currentPly]?.is_mate;
+
+    if (liveAnalysis && enginesOutput.stockfish) {
+        const cpMatch = enginesOutput.stockfish.match(/score cp (-?\d+)/);
+        const mateMatch = enginesOutput.stockfish.match(/score mate (-?\d+)/);
+        
+        const isBlackToMove = getDisplayFen().includes(" b ");
+        const multiplier = isBlackToMove ? -1 : 1;
+
+        if (cpMatch) {
+            currentEval = parseInt(cpMatch[1], 10) * multiplier;
+            isMate = false;
+        } else if (mateMatch) {
+            currentEval = parseInt(mateMatch[1], 10) * multiplier;
+            isMate = true;
+        }
+    }
+
     let evalBarHeight = 50;
     if (isMate) {
         evalBarHeight = currentEval > 0 ? 100 : 0;

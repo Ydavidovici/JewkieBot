@@ -88,9 +88,28 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
         int currentBestScore = -INF;
         bool foundLegalMove = false;
 
+        int move_number = 1;
         for (const auto& move : rootMoves) {
             if (!board.makeMove(move)) {
                 continue;
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            auto timeMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - tm_.getStartTime()).count();
+            if (depth >= 4 && timeMs > 500) {
+                long long currentTotalNodes = 0;
+                for (const auto& ws : workers) {
+                    currentTotalNodes += ws.stats.totalNodes;
+                }
+                long long nps = timeMs > 0 ? (currentTotalNodes * 1000) / timeMs : 0;
+                
+                std::cout << "info depth " << depth 
+                          << " currmove " << move.toString() 
+                          << " currmovenumber " << move_number 
+                          << " nodes " << currentTotalNodes 
+                          << " nps " << nps 
+                          << " time " << timeMs << "\n";
+                std::cout.flush();
             }
 
             if (!foundLegalMove) {
@@ -111,6 +130,8 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             if (score > alpha) {
                 alpha = score;
             }
+            
+            ++move_number;
         }
 
         if (!shouldStop() && foundLegalMove) {
@@ -120,10 +141,20 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             prevBestMove = bestMove;
             hasPrevBest = true;
 
+            long long finalTotalNodes = 0;
+            for (const auto& ws : workers) {
+                finalTotalNodes += ws.stats.totalNodes;
+            }
+            auto timeMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tm_.getStartTime()).count();
+            long long nps = timeMs > 0 ? (finalTotalNodes * 1000) / timeMs : 0;
+
             // Output UCI info string for continuous scoring
             std::cout << "info depth " << depth 
                       << " score cp " << currentBestScore 
-                      << " pv " << bestMove.toString() << "\n";
+                      << " pv " << bestMove.toString()
+                      << " nodes " << finalTotalNodes 
+                      << " nps " << nps 
+                      << " time " << timeMs << "\n";
             std::cout.flush();
         }
     }

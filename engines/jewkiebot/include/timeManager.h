@@ -49,6 +49,8 @@ public:
 
     void startInfinite();
 
+    std::chrono::steady_clock::time_point getStartTime() const { return start_time_; }
+
 private:
     std::chrono::steady_clock::time_point start_time_{};
     std::chrono::milliseconds soft_alloc_{0};
