@@ -526,7 +526,7 @@ if (import.meta.main) {
             const destDir = path.dirname(STOCKFISH_PATH);
             fs.mkdirSync(destDir, { recursive: true });
             
-            const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64-avx2.tar";
+            const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar";
             const tarPath = path.join(destDir, "stockfish.tar");
             
             console.log(`[Server] Fetching ${url} using Bun...`);
@@ -541,7 +541,7 @@ if (import.meta.main) {
             await Bun.write(tarPath, buffer);
             
             console.log(`[Server] Download complete. Extracting archive...`);
-            const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64-avx2 ${STOCKFISH_PATH} 2>/dev/null || true`;
+            const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64 ${STOCKFISH_PATH} 2>/dev/null || true && chmod +x ${STOCKFISH_PATH} 2>/dev/null || true`;
             spawnSync("bash", ["-c", cmd], { stdio: "inherit" });
             
             fs.unlinkSync(tarPath);
