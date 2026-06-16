@@ -12,11 +12,8 @@ static void handle_uci(const std::string& line, Engine& engine);
 static void handle_isready(const std::string& line, Engine& engine);
 static void handle_ucinewgame(const std::string& line, Engine& engine);
 static void handle_quit(const std::string& line, Engine& engine);
-static void handle_position(const std::string& line, Engine& engine);
+static void handle_stop(const std::string& line, Engine& engine);
 static void handle_go(const std::string& line, Engine& engine);
-static void handle_bench(const std::string& line, Engine& engine);
-static void handle_eval(const std::string& line, Engine& engine);
-static void handle_setoption(const std::string& line, Engine& engine);
 
 static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"uci", handle_uci},
@@ -28,8 +25,8 @@ static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"bench", handle_bench},
     {"eval", handle_eval},
     {"setoption", handle_setoption},
+    {"stop", handle_stop},
 };
-
 
 static std::string trim(const std::string& s) {
     const auto first = s.find_first_not_of(" \t\r\n");
@@ -150,7 +147,14 @@ static void handle_ucinewgame(const std::string& line, Engine& engine) {
     std::cout.flush();
 }
 
-static void handle_quit(const std::string& line, Engine& engine) {}
+static void handle_quit(const std::string& line, Engine& engine) {
+    engine.stopSearch();
+    engine.waitSearch();
+}
+
+static void handle_stop(const std::string& line, Engine& engine) {
+    engine.stopSearch();
+}
 
 static void handle_position(const std::string& line, Engine& engine) {
     std::string cmd, rest;
@@ -259,10 +263,17 @@ static void handle_go(const std::string& line, Engine& engine) {
         settings.time_left_ms = 0;
     }
 
-    // 4. Execute
-    const std::string bestUci = engine.playMove(settings);
-    std::cout << "bestmove " << bestUci << "\n";
-    std::cout.flush();
+    // Ensure any previous search is fully stopped before starting a new one
+    engine.stopSearch();
+    engine.waitSearch();
+
+    engine.setSearching(true);
+    engine.searchThread = std::thread([&engine, settings]() {
+        const std::string bestUci = engine.playMove(settings);
+        std::cout << "bestmove " << bestUci << "\n";
+        std::cout.flush();
+        engine.setSearching(false);
+    });
 }
 
 static void handle_bench(const std::string& line, Engine& engine) {

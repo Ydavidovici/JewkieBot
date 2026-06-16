@@ -19,6 +19,8 @@ public:
     void setThreadCount(int count);
     int getThreadCount() const { return numThreads_; }
 
+    void stop() { stopFlag_.store(true, std::memory_order_relaxed); }
+
     struct SearchStats {
         long long totalNodes = 0;
         long long qNodes = 0;

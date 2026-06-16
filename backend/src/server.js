@@ -142,13 +142,13 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
             await jewkiebot.start();
             jewkiebot.on("line", forwardLine("jewkiebot"));
             await jewkiebot.position(fen);
-            jewkiebot._sendRaw(`go depth ${depth}`);
+            jewkiebot._sendRaw(`go infinite`);
 
             if (stockfish) {
                 await stockfish.start();
                 stockfish.on("line", forwardLine("stockfish"));
                 await stockfish.position(fen);
-                stockfish._sendRaw(`go depth ${depth}`);
+                stockfish._sendRaw(`go infinite`);
             }
 
         } catch (err) {

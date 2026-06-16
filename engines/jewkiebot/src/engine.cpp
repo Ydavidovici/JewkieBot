@@ -5,7 +5,22 @@ Engine::Engine()
     history.clear();
 }
 
-Engine::~Engine() = default;
+Engine::~Engine() {
+    stopSearch();
+    waitSearch();
+}
+
+void Engine::stopSearch() {
+    if (is_searching.load()) {
+        searcher.stop();
+    }
+}
+
+void Engine::waitSearch() {
+    if (searchThread.joinable()) {
+        searchThread.join();
+    }
+}
 
 void Engine::reset() {
     board.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");

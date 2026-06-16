@@ -5,6 +5,8 @@
 #include "search.h"
 #include "transpositionTable.h"
 #include "timeManager.h"
+#include <thread>
+#include <atomic>
 #include <vector>
 #include <string>
 
@@ -23,13 +25,18 @@ public:
     ~Engine();
 
     void reset();
-    bool setPosition(const std::string &fen);
+    bool setPosition(const std::string& fen);
 
-    std::string playMove(const PlaySettings &settings);
+    std::string playMove(const PlaySettings& settings);
+
+    void stopSearch();
+    void waitSearch();
+    bool isSearching() const { return is_searching.load(); }
+    void setSearching(bool val) { is_searching.store(val); }
 
     std::string getFEN() const;
     int evaluateCurrentPosition();
-    bool applyMove(const std::string &uci);
+    bool applyMove(const std::string& uci);
     bool isGameOver() const;
 
     Board& getBoard() { return board; }
@@ -41,6 +48,8 @@ public:
     void setUseBook(bool on) { use_book = on; }
     void setBookMaxFullmove(int n) { book_max_fullmove = n; }
     int bookMaxFullmove() const { return book_max_fullmove; }
+
+    std::thread searchThread;
 
 private:
     Board board;
@@ -56,6 +65,8 @@ private:
     // Consider defaulting to false and flipping to true only on a successful BookFile load.
     bool use_book = true;
     int book_max_fullmove = 20;
+
+    std::atomic<bool> is_searching{false};
 
     friend class Bench;
 };

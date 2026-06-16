@@ -116,6 +116,12 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             tm_.onIterationComplete(changed);
             prevBestMove = bestMove;
             hasPrevBest = true;
+
+            // Output UCI info string for continuous scoring
+            std::cout << "info depth " << depth 
+                      << " score cp " << currentBestScore 
+                      << " pv " << bestMove.toString() << "\n";
+            std::cout.flush();
         }
     }
 
