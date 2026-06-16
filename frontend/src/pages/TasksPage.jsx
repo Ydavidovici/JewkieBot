@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from "react";
-import { Activity, Download, HardDrive, ListOrdered, FileText } from "lucide-react";
+import React, {useState, useEffect} from "react";
+import {Activity, Download, HardDrive, ListOrdered, FileText} from "lucide-react";
 
 export default function TasksPage() {
     const [tasks, setTasks] = useState([]);
-    
+
     // Chess.com State
     const [username, setUsername] = useState("");
     const [months, setMonths] = useState(1);
-    
+
     // PGN State
     const [pgnString, setPgnString] = useState("");
 
@@ -16,7 +16,7 @@ export default function TasksPage() {
 
     const fetchTasks = async () => {
         try {
-            const res = await fetch("http://localhost:8000/api/tasks");
+            const res = await fetch("/api/tasks");
             const data = await res.json();
             setTasks(data);
         } catch (e) {
@@ -35,10 +35,10 @@ export default function TasksPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch("http://localhost:8000/api/chesscom/fetch", {
+            const res = await fetch("/api/chesscom/fetch", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, months })
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({username, months}),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to fetch games");
@@ -56,10 +56,10 @@ export default function TasksPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch("http://localhost:8000/api/pgn/ingest", {
+            const res = await fetch("/api/pgn/ingest", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pgn: pgnString })
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({pgn: pgnString}),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to ingest PGN");
@@ -75,7 +75,7 @@ export default function TasksPage() {
     return (
         <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-8 overflow-y-auto">
             <h1 className="text-3xl font-black mb-8 text-white flex items-center gap-3">
-                <ListOrdered className="text-blue-500" /> Tasks & Integrations
+                <ListOrdered className="text-blue-500"/> Tasks & Integrations
             </h1>
 
             {error && (
@@ -94,11 +94,11 @@ export default function TasksPage() {
                         <form onSubmit={handleChessComFetch} className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
-                                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. Hikaru" className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors" required />
+                                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. Hikaru" className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors" required/>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-300 mb-1">Months back to fetch</label>
-                                <input type="number" min="1" max="12" value={months} onChange={(e) => setMonths(parseInt(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors" required />
+                                <input type="number" min="1" max="12" value={months} onChange={(e) => setMonths(parseInt(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors" required/>
                             </div>
                             <button type="submit" disabled={loading || !username} className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-medium transition-colors">
                                 Import Games
@@ -112,7 +112,7 @@ export default function TasksPage() {
                         </h2>
                         <form onSubmit={handlePgnIngest} className="space-y-4">
                             <div>
-                                <textarea value={pgnString} onChange={(e) => setPgnString(e.target.value)} placeholder="[Event ...] \n1. e4 e5..." className="w-full h-32 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-amber-500 transition-colors" required />
+                                <textarea value={pgnString} onChange={(e) => setPgnString(e.target.value)} placeholder="[Event ...] \n1. e4 e5..." className="w-full h-32 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-amber-500 transition-colors" required/>
                             </div>
                             <button type="submit" disabled={loading || !pgnString} className="w-full py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded font-medium transition-colors">
                                 Parse & Ingest PGN
@@ -126,43 +126,43 @@ export default function TasksPage() {
                         </h2>
                         <p className="text-sm text-slate-400 mb-4">Run a Gauntlet or Self-Play match in the background.</p>
                         <div className="flex gap-4">
-                            <button 
+                            <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("http://localhost:8000/api/cutechess/gauntlet", {
+                                    await fetch("/api/cutechess/gauntlet", {
                                         method: "POST",
-                                        headers: { "Content-Type": "application/json" },
+                                        headers: {"Content-Type": "application/json"},
                                         body: JSON.stringify({
-                                            myEngine: { name: "JewkieBot", path: "jewkiebot/build/jewkiebot.exe" },
+                                            myEngine: {name: "JewkieBot", path: "jewkiebot/build/jewkiebot.exe"},
                                             opponents: [
-                                                { name: "SF-Depth4", path: "stockfish/stockfish", args: ["depth=4"] }
+                                                {name: "SF-Depth4", path: "stockfish/stockfish", args: ["depth=4"]},
                                             ],
                                             tc: "10+0.1",
-                                            games: 10
-                                        })
+                                            games: 10,
+                                        }),
                                     });
                                     setLoading(false);
                                     fetchTasks();
                                 }}
-                                disabled={loading} 
+                                disabled={loading}
                                 className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
                             >
                                 Quick Gauntlet (10 Games)
                             </button>
-                            <button 
+                            <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("http://localhost:8000/api/cutechess/selfplay", {
+                                    await fetch("/api/cutechess/selfplay", {
                                         method: "POST",
-                                        headers: { "Content-Type": "application/json" },
+                                        headers: {"Content-Type": "application/json"},
                                         body: JSON.stringify({
-                                            v1: null, v2: null, tc: "10+0.1", games: 10
-                                        })
+                                            v1: null, v2: null, tc: "10+0.1", games: 10,
+                                        }),
                                     });
                                     setLoading(false);
                                     fetchTasks();
                                 }}
-                                disabled={loading} 
+                                disabled={loading}
                                 className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
                             >
                                 Quick Self-Play (10 Games)
@@ -178,26 +178,26 @@ export default function TasksPage() {
                             <HardDrive size={20}/> Core Systems
                         </h2>
                         <div className="flex gap-4">
-                            <button 
+                            <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("http://localhost:8000/api/analysis/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                                    await fetch("/api/analysis/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})});
                                     setLoading(false);
                                     fetchTasks();
                                 }}
-                                disabled={loading} 
+                                disabled={loading}
                                 className="flex-1 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
                             >
                                 Run Teacher Analysis
                             </button>
-                            <button 
+                            <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("http://localhost:8000/api/engine/build", { method: "POST" });
+                                    await fetch("/api/engine/build", {method: "POST"});
                                     setLoading(false);
                                     fetchTasks();
                                 }}
-                                disabled={loading} 
+                                disabled={loading}
                                 className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
                             >
                                 Recompile JewkieBot C++
@@ -209,7 +209,7 @@ export default function TasksPage() {
                         <h2 className="text-xl font-semibold mb-4 text-purple-400 flex items-center gap-2">
                             <Activity size={20}/> Background Tasks
                         </h2>
-                        
+
                         <div className="flex-1 overflow-y-auto space-y-3">
                             {tasks.length === 0 ? (
                                 <p className="text-slate-500 text-sm text-center py-8">No tasks running.</p>
@@ -219,9 +219,9 @@ export default function TasksPage() {
                                         <div className="flex justify-between items-center">
                                             <span className="font-semibold text-slate-200 capitalize">{task.type.replace("_", " ")}</span>
                                             <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                                                task.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' : 
-                                                task.status === 'RUNNING' ? 'bg-blue-500/20 text-blue-400' : 
-                                                'bg-red-500/20 text-red-400'
+                                                task.status === "COMPLETED" ? "bg-emerald-500/20 text-emerald-400" :
+                                                    task.status === "RUNNING" ? "bg-blue-500/20 text-blue-400" :
+                                                        "bg-red-500/20 text-red-400"
                                             }`}>
                                                 {task.status}
                                             </span>
@@ -229,7 +229,7 @@ export default function TasksPage() {
                                         <p className="text-xs text-slate-500">{task.id}</p>
                                         {task.progress && (
                                             <div className="text-xs text-slate-400 bg-slate-900 p-2 rounded">
-                                                {typeof task.progress === 'string' ? task.progress : JSON.stringify(task.progress)}
+                                                {typeof task.progress === "string" ? task.progress : JSON.stringify(task.progress)}
                                             </div>
                                         )}
                                         {task.result && (
