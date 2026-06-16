@@ -5,10 +5,35 @@ import {OPENINGS} from "./openings.js";
 import {ApiTransport} from "./apiTransport.js";
 
 export class LichessRateLimited extends Error {
-    constructor(retryAfterSec) {
+    constructor(retryAfterSec, isExplicit = false) {
         super(`Lichess rate-limited; retry after ${retryAfterSec}s`);
         this.name = "LichessRateLimited";
         this.retryAfterSec = retryAfterSec;
+        this.isExplicit = isExplicit;
+    }
+
+    static async fromResponse(response, defaultRetryAfterSec = 150) {
+        let body = "";
+        let parsedBody = null;
+        try {
+            body = await response.text();
+            parsedBody = JSON.parse(body);
+        } catch (e) {
+        }
+        
+        let retryAfter = parseInt(response.headers?.get?.("Retry-After") ?? "", 10);
+        if (!Number.isFinite(retryAfter) || retryAfter <= 0) {
+            if (parsedBody && parsedBody.ratelimit && typeof parsedBody.ratelimit.seconds === "number") {
+                retryAfter = parsedBody.ratelimit.seconds;
+            }
+        }
+        
+        const isExplicit = Number.isFinite(retryAfter) && retryAfter > 0;
+        const seconds = isExplicit ? retryAfter : defaultRetryAfterSec;
+        
+        const error = new LichessRateLimited(seconds, isExplicit);
+        error.bodyText = body;
+        return error;
     }
 }
 
@@ -1178,26 +1203,13 @@ export class LichessBot {
         }
 
         if (res.status === 429) {
-            let body = "";
-            let parsedBody = null;
-            try {
-                body = await res.text();
-                parsedBody = JSON.parse(body);
-            } catch (e) {
-            }
-            this.notifier.error(`[Lichess API] 429 Rate Limited. Response body: ${body}`);
+            const error = await LichessRateLimited.fromResponse(res, this.defaultRetryAfterSec);
+            this.notifier.error(`[Lichess API] 429 Rate Limited. Response body: ${error.bodyText}`);
             
-            let retryAfter = parseInt(res.headers?.get?.("Retry-After") ?? "", 10);
-            if (!Number.isFinite(retryAfter) || retryAfter <= 0) {
-                if (parsedBody && parsedBody.ratelimit && typeof parsedBody.ratelimit.seconds === 'number') {
-                    retryAfter = parsedBody.ratelimit.seconds;
-                }
-            }
+            this._setRateLimit(error.retryAfterSec, error.isExplicit);
             
-            const isExplicit = Number.isFinite(retryAfter) && retryAfter > 0;
-            const seconds = isExplicit ? retryAfter : this.defaultRetryAfterSec;
-            this._setRateLimit(seconds, isExplicit);
-            throw new LichessRateLimited(this._rateLimitRemainingSec() || seconds);
+            error.retryAfterSec = this._rateLimitRemainingSec() || error.retryAfterSec;
+            throw error;
         }
         return res;
     }
