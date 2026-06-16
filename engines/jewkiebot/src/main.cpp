@@ -14,6 +14,10 @@ static void handle_ucinewgame(const std::string& line, Engine& engine);
 static void handle_quit(const std::string& line, Engine& engine);
 static void handle_stop(const std::string& line, Engine& engine);
 static void handle_go(const std::string& line, Engine& engine);
+static void handle_position(const std::string& line, Engine& engine);
+static void handle_bench(const std::string& line, Engine& engine);
+static void handle_eval(const std::string& line, Engine& engine);
+static void handle_setoption(const std::string& line, Engine& engine);
 
 static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"uci", handle_uci},
