@@ -78,7 +78,7 @@ export default function AnalysisPage() {
     const getDisplayFen = () => {
         if (game) return game.fen();
         if (customFens.length === 0) return "start";
-        if (currentPly === 0) return customFens[0];
+        if (currentPly === 0) return "start";
         return customFens[currentPly - 1];
     };
 

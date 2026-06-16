@@ -139,8 +139,11 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
                 }
             };
 
+            console.log(`[Stream] Incoming stream request for FEN: ${fen}`);
+
             await jewkiebot.start();
             jewkiebot.on("line", forwardLine("jewkiebot"));
+            jewkiebot._sendRaw("setoption name OwnBook value false");
             await jewkiebot.position(fen);
             jewkiebot._sendRaw(`go infinite`);
 
