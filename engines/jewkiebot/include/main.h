@@ -15,6 +15,7 @@ struct PlaySettings {
     int time_left_ms;
     int increment_ms;
     int moves_to_go;
+    bool infinite = false;
 };
 
 struct BenchSettings;

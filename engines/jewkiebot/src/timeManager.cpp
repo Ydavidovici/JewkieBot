@@ -22,6 +22,7 @@ void TimeManager::start(uint64_t millis_left, uint64_t inc, int mtg) {
     hard_alloc_ = std::chrono::milliseconds(hard);
     soft_scale_ = 1.0;
     stable_count_ = 0;
+    is_infinite_ = false;
 }
 
 void TimeManager::startFixed(uint64_t movetime_ms) {
@@ -35,9 +36,16 @@ void TimeManager::startFixed(uint64_t movetime_ms) {
     hard_alloc_ = std::chrono::milliseconds(budget);
     soft_scale_ = 1.0;
     stable_count_ = 0;
+    is_infinite_ = false;
+}
+
+void TimeManager::startInfinite() {
+    start_time_ = std::chrono::steady_clock::now();
+    is_infinite_ = true;
 }
 
 bool TimeManager::isSoftTimeUp() const {
+    if (is_infinite_) return false;
     const auto scaled = std::chrono::milliseconds(
         static_cast<int64_t>(soft_alloc_.count() * soft_scale_));
     const auto effective = std::min(scaled, hard_alloc_);
@@ -45,6 +53,7 @@ bool TimeManager::isSoftTimeUp() const {
 }
 
 bool TimeManager::isHardTimeUp() const {
+    if (is_infinite_) return false;
     return std::chrono::steady_clock::now() >= start_time_ + hard_alloc_;
 }
 

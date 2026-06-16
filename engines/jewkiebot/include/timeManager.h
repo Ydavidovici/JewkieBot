@@ -47,10 +47,13 @@ public:
      */
     void onIterationComplete(bool best_move_changed);
 
+    void startInfinite();
+
 private:
     std::chrono::steady_clock::time_point start_time_{};
     std::chrono::milliseconds soft_alloc_{0};
     std::chrono::milliseconds hard_alloc_{0};
     double soft_scale_{1.0};
     int stable_count_{0};
+    bool is_infinite_{false};
 };
