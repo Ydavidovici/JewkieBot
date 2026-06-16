@@ -265,6 +265,7 @@ static void handle_go(const std::string& line, Engine& engine) {
     if (infinite) {
         settings.depth = 64;
         settings.time_left_ms = 0;
+        settings.infinite = true;
     }
 
     // Ensure any previous search is fully stopped before starting a new one
