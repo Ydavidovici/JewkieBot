@@ -21,12 +21,29 @@ export default function AnalysisPage() {
 
     const [pgnInput, setPgnInput] = useState("");
 
-    // Fetch recent games on load
+    const [playerFilter, setPlayerFilter] = useState("");
+    const [isFiltering, setIsFiltering] = useState(false);
+
+    // Fetch games based on filter
     useEffect(() => {
-        getRecentGames(15, activeDbUrl)
-            .then(res => setRecentGames(res.data))
-            .catch(err => console.error("Failed to load recent games", err));
-    }, [activeDbUrl]);
+        const fetchGames = async () => {
+            try {
+                let res;
+                if (isFiltering && playerFilter.trim()) {
+                    // Uses getGamesByPlayer logic from api
+                    res = await fetch(`${activeDbUrl}/api/v1/chess/games/player/${encodeURIComponent(playerFilter.trim())}`).then(r => r.json());
+                } else {
+                    res = await getRecentGames(15, activeDbUrl);
+                }
+                const games = res?.data || res || [];
+                setRecentGames(Array.isArray(games) ? games : []);
+            } catch (err) {
+                console.error("Failed to load games", err);
+                setRecentGames([]);
+            }
+        };
+        fetchGames();
+    }, [activeDbUrl, isFiltering, playerFilter]);
 
     // Cleanup SSE
     useEffect(() => {
@@ -81,7 +98,7 @@ export default function AnalysisPage() {
                 getGameEvals(gameId, activeDbUrl)
             ]);
             
-            const moves = movesRes.data || [];
+            const moves = movesRes.data || movesRes || [];
             const history = [];
             const fens = [];
             
@@ -91,7 +108,8 @@ export default function AnalysisPage() {
             }
             
             const evalsMap = {};
-            (evalsRes.data || []).forEach(e => {
+            const evalsData = evalsRes.data || evalsRes || [];
+            evalsData.forEach(e => {
                 evalsMap[e.ply] = e;
             });
             
@@ -142,6 +160,11 @@ export default function AnalysisPage() {
         goToPly(Math.min(moveHistory.length, currentPly + 1));
     };
 
+    const handleFilterSubmit = (e) => {
+        e.preventDefault();
+        setIsFiltering(!!playerFilter.trim());
+    };
+
     // Calculate current evaluation to show in bar
     const currentEval = evals[currentPly]?.best_cp || 0;
     const isMate = evals[currentPly]?.is_mate;
@@ -177,10 +200,23 @@ export default function AnalysisPage() {
             <div className="flex-1 flex gap-8 min-h-0">
                 {/* Left Sidebar: Recent Games */}
                 <div className="w-64 bg-slate-900 border border-slate-800 rounded-2xl shadow-lg flex flex-col overflow-hidden shrink-0">
-                    <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                    <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex flex-col gap-3">
                         <h2 className="font-bold text-white flex items-center gap-2">
-                            <Activity size={18} className="text-blue-400"/> Recent Games
+                            <Activity size={18} className="text-blue-400"/> {isFiltering ? 'Player Games' : 'Recent Games'}
                         </h2>
+                        <form onSubmit={handleFilterSubmit} className="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="Username..."
+                                value={playerFilter}
+                                onChange={e => {
+                                    setPlayerFilter(e.target.value);
+                                    if (!e.target.value) setIsFiltering(false);
+                                }}
+                                className="bg-slate-950 border border-slate-700 text-xs text-white px-2 py-1 rounded w-full focus:outline-none focus:border-blue-500"
+                            />
+                            <button type="submit" className="bg-slate-700 hover:bg-slate-600 text-xs px-2 rounded font-semibold transition-colors">Go</button>
+                        </form>
                     </div>
                     <div className="flex-1 overflow-auto p-2 flex flex-col gap-1">
                         {recentGames.map(g => (
@@ -189,8 +225,8 @@ export default function AnalysisPage() {
                                 onClick={() => loadGameData(g.id)}
                                 className={`text-left p-3 rounded-lg transition-colors text-sm ${selectedGame === g.id ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-slate-800 border border-transparent'}`}
                             >
-                                <div className="font-semibold text-slate-200 truncate">{g.white_name || g.white_id}</div>
-                                <div className="font-semibold text-slate-200 truncate">{g.black_name || g.black_id}</div>
+                                <div className="font-semibold text-slate-200 truncate">{g.white_name || g.white_username || g.white_id}</div>
+                                <div className="font-semibold text-slate-200 truncate">{g.black_name || g.black_username || g.black_id}</div>
                                 <div className="text-xs text-slate-500 mt-1">{new Date(g.created_at).toLocaleDateString()} • {g.source}</div>
                             </button>
                         ))}

@@ -879,17 +879,7 @@ export class LichessBot {
         const totalSec = Math.ceil(retryAfterSec * multiplier);
         let candidate = this._now() + totalSec * 1000;
 
-        if (isExplicit && retryAfterSec > 3600) {
-            const next7AM = new Date(this._now());
-            next7AM.setHours(7, 0, 0, 0);
-            if (next7AM.getTime() <= this._now()) {
-                next7AM.setDate(next7AM.getDate() + 1);
-            }
-            if (candidate < next7AM.getTime()) {
-                this.notifier.info(`[Rate Limit] Deferring resume from ${new Date(candidate).toLocaleTimeString()} to 7 AM local time.`);
-                candidate = next7AM.getTime();
-            }
-        }
+        // We should simply respect the candidate time calculated from the explicit retryAfterSec.
 
         if (candidate > this.rateLimitedUntil) this.rateLimitedUntil = candidate;
 
