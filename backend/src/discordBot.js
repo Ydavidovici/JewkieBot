@@ -122,7 +122,7 @@ export class HealthPinger {
         let up = false;
         let detail = null;
         try {
-            await this.api.get("", { signal: ac.signal });
+            await this.api.get("", { signal: ac.signal, silent: true });
             up = true;
             detail = null;
         } catch (err) {

@@ -49,10 +49,12 @@ export class ApiTransport {
             
             return await res.text();
         } catch (err) {
-            if (this.notifier) {
-                this.notifier.error(`[ApiTransport] Request to ${url} failed`, { error: err?.message ?? String(err) });
-            } else {
-                console.error(`[ApiTransport] Request to ${url} failed:`, err?.message ?? err);
+            if (!options.silent) {
+                if (this.notifier) {
+                    this.notifier.error(`[ApiTransport] Request to ${url} failed`, { error: err?.message ?? String(err) });
+                } else {
+                    console.error(`[ApiTransport] Request to ${url} failed:`, err?.message ?? err);
+                }
             }
             throw err;
         }

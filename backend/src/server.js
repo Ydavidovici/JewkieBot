@@ -510,7 +510,28 @@ if (import.meta.main) {
     const defaultStockfishName = isWindows ? "stockfish.exe" : "stockfish";
     const defaultStockfishPath = path.resolve(import.meta.dir, `../../engines/stockfish/${defaultStockfishName}`);
     const STOCKFISH_PATH = process.env.STOCKFISH_PATH || defaultStockfishPath;
-    const stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
+    let stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
+
+    if (!stockfishExists && !isWindows) {
+        console.log(`[Server] Stockfish not found at ${STOCKFISH_PATH}. Downloading...`);
+        try {
+            const { spawnSync } = await import("child_process");
+            const fs = await import("fs");
+            const destDir = path.dirname(STOCKFISH_PATH);
+            fs.mkdirSync(destDir, { recursive: true });
+            
+            const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64-avx2.tar";
+            const cmd = `wget -qO- ${url} | tar x --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64-avx2 ${STOCKFISH_PATH} 2>/dev/null || true`;
+            
+            spawnSync("bash", ["-c", cmd], { stdio: "inherit" });
+            
+            stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
+            if (stockfishExists) console.log("[Server] Stockfish downloaded successfully.");
+        } catch (err) {
+            console.error("[Server] Failed to auto-download stockfish:", err);
+        }
+    }
+
     const analyzer = stockfishExists
         ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20})
         : null;
