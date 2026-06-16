@@ -526,9 +526,15 @@ if (import.meta.main) {
             console.log(`[Server] Fetching ${url} using Bun...`);
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-            await Bun.write(tarPath, res);
             
-            console.log(`[Server] Extracting archive...`);
+            const size = res.headers.get("content-length");
+            const sizeMB = size ? (parseInt(size) / 1024 / 1024).toFixed(1) + " MB" : "a large file";
+            console.log(`[Server] Downloading ${sizeMB}... this may take a minute and has no progress bar. Please wait...`);
+            
+            const buffer = await res.arrayBuffer();
+            await Bun.write(tarPath, buffer);
+            
+            console.log(`[Server] Download complete. Extracting archive...`);
             const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64-avx2 ${STOCKFISH_PATH} 2>/dev/null || true`;
             spawnSync("bash", ["-c", cmd], { stdio: "inherit" });
             
