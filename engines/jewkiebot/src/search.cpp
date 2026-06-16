@@ -65,6 +65,7 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
     Move bestMove = rootMoves[0];
     Move prevBestMove;
     bool hasPrevBest = false;
+    int prevScore = 0;
 
     std::vector<WorkerState> workers(numThreads_);
     for (auto& ws : workers) ws.reset();
@@ -105,8 +106,18 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
                 
                 std::cout << "info depth " << depth 
                           << " currmove " << move.toString() 
-                          << " currmovenumber " << move_number 
-                          << " nodes " << currentTotalNodes 
+                          << " currmovenumber " << move_number;
+                          
+                int displayScore = (currentBestScore != -INF) ? currentBestScore : prevScore;
+                if (displayScore > MATE_SCORE - 1000) {
+                    std::cout << " score mate " << (MATE_SCORE - displayScore + 1) / 2;
+                } else if (displayScore < -MATE_SCORE + 1000) {
+                    std::cout << " score mate -" << (displayScore + MATE_SCORE + 1) / 2;
+                } else {
+                    std::cout << " score cp " << displayScore;
+                }
+
+                std::cout << " nodes " << currentTotalNodes 
                           << " nps " << nps 
                           << " time " << timeMs << "\n";
                 std::cout.flush();
@@ -140,6 +151,7 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             tm_.onIterationComplete(changed);
             prevBestMove = bestMove;
             hasPrevBest = true;
+            prevScore = currentBestScore;
 
             long long finalTotalNodes = 0;
             for (const auto& ws : workers) {
@@ -149,9 +161,17 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             long long nps = timeMs > 0 ? (finalTotalNodes * 1000) / timeMs : 0;
 
             // Output UCI info string for continuous scoring
-            std::cout << "info depth " << depth 
-                      << " score cp " << currentBestScore 
-                      << " pv " << bestMove.toString()
+            std::cout << "info depth " << depth;
+            
+            if (currentBestScore > MATE_SCORE - 1000) {
+                std::cout << " score mate " << (MATE_SCORE - currentBestScore + 1) / 2;
+            } else if (currentBestScore < -MATE_SCORE + 1000) {
+                std::cout << " score mate -" << (currentBestScore + MATE_SCORE + 1) / 2;
+            } else {
+                std::cout << " score cp " << currentBestScore;
+            }
+            
+            std::cout << " pv " << bestMove.toString()
                       << " nodes " << finalTotalNodes 
                       << " nps " << nps 
                       << " time " << timeMs << "\n";

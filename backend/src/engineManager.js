@@ -26,7 +26,7 @@ export class UciEngine extends EventEmitter {
         this.queue = [];
         this.restarts = 0;
         this.maxRestarts = options.maxRestarts ?? 5;
-        this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 2000;
+        this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10000;
         this.restartDelayMs = options.restartDelayMs ?? 1000;
         this.commandTimeoutBufferMs = options.commandTimeoutBufferMs ?? 2000;
         this.spawnFn = options.spawnFn ?? spawn;
@@ -201,7 +201,13 @@ export class UciEngine extends EventEmitter {
     async _handleCrash() {
         if (this.isShuttingDown) return;
         this.ready = false;
-        this.process = null;
+
+        if (this.process) {
+            try {
+                this.process.kill(9);
+            } catch (e) {}
+            this.process = null;
+        }
 
         if (this.queue.length > 0) {
             console.warn(`[Engine] Clearing ${this.queue.length} pending commands due to crash.`);
@@ -222,6 +228,7 @@ export class UciEngine extends EventEmitter {
             console.error(`[Engine ${this.label}] Max restarts exceeded`);
             this.notifier.error(`[EngineManager] Engine ${this.label} exceeded max restarts`, {max: this.maxRestarts});
             this.emit("fatal_error", new Error("Max restarts exceeded"));
+            process.exit(1);
         }
     }
 
