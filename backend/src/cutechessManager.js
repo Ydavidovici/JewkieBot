@@ -19,7 +19,7 @@ export class CutechessManager extends EventEmitter {
             args.push(`arg=-o`, `arg=ServerAliveInterval=30`);
             const target = engineInfo.sshConfig.user ? `${engineInfo.sshConfig.user}@${engineInfo.sshConfig.host}` : engineInfo.sshConfig.host;
             args.push(`arg=${target}`);
-            args.push(`arg=${engineInfo.sshConfig.stockfishPath}`);
+            args.push(`arg=${engineInfo.sshConfig.enginePath || engineInfo.path}`);
         } else {
             args.push(`cmd=${engineInfo.path}`);
         }

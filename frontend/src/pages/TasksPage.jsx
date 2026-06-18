@@ -11,6 +11,11 @@ export default function TasksPage() {
     // PGN State
     const [pgnString, setPgnString] = useState("");
 
+    // Tournament State
+    const [tourneyGames, setTourneyGames] = useState(100);
+    const [tourneyOpponent, setTourneyOpponent] = useState("stockfish");
+    const [tourneySfDepth, setTourneySfDepth] = useState(4);
+
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
@@ -125,47 +130,79 @@ export default function TasksPage() {
                             <Activity size={20}/> Cutechess Tournament
                         </h2>
                         <p className="text-sm text-slate-400 mb-4">Run a Gauntlet or Self-Play match in the background.</p>
-                        <div className="flex gap-4">
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-1">Opponent</label>
+                                <select 
+                                    value={tourneyOpponent} 
+                                    onChange={(e) => setTourneyOpponent(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors"
+                                >
+                                    <option value="stockfish">Stockfish</option>
+                                    <option value="self">Self-Play (JewkieBot)</option>
+                                </select>
+                            </div>
+
+                            {tourneyOpponent === "stockfish" && (
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-300 mb-1">Stockfish Depth</label>
+                                    <select 
+                                        value={tourneySfDepth} 
+                                        onChange={(e) => setTourneySfDepth(parseInt(e.target.value))}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors"
+                                    >
+                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20].map(depth => (
+                                            <option key={depth} value={depth}>Depth {depth}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-1">Number of Games</label>
+                                <select 
+                                    value={tourneyGames} 
+                                    onChange={(e) => setTourneyGames(parseInt(e.target.value))}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors"
+                                >
+                                    {[10, 50, 100, 200, 500, 1000].map(games => (
+                                        <option key={games} value={games}>{games} Games</option>
+                                    ))}
+                                </select>
+                            </div>
+
                             <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("/api/cutechess/gauntlet", {
-                                        method: "POST",
-                                        headers: {"Content-Type": "application/json"},
-                                        body: JSON.stringify({
-                                            myEngine: {name: "JewkieBot", path: "jewkiebot/build/jewkiebot.exe"},
-                                            opponents: [
-                                                {name: "SF-Depth4", path: "stockfish/stockfish", args: ["depth=4"]},
-                                            ],
-                                            tc: "10+0.1",
-                                            games: 10,
-                                        }),
-                                    });
+                                    if (tourneyOpponent === "self") {
+                                        await fetch("/api/cutechess/selfplay", {
+                                            method: "POST",
+                                            headers: {"Content-Type": "application/json"},
+                                            body: JSON.stringify({
+                                                v1: null, v2: null, tc: "10+0.1", games: tourneyGames,
+                                            }),
+                                        });
+                                    } else {
+                                        await fetch("/api/cutechess/gauntlet", {
+                                            method: "POST",
+                                            headers: {"Content-Type": "application/json"},
+                                            body: JSON.stringify({
+                                                myEngine: {name: "JewkieBot", path: "jewkiebot/build/jewkiebot.exe"},
+                                                opponents: [
+                                                    {name: `SF-Depth${tourneySfDepth}`, path: "stockfish/stockfish", args: [`depth=${tourneySfDepth}`]}
+                                                ],
+                                                tc: "10+0.1",
+                                                games: tourneyGames,
+                                            }),
+                                        });
+                                    }
                                     setLoading(false);
                                     fetchTasks();
                                 }}
                                 disabled={loading}
-                                className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
+                                className="w-full py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
                             >
-                                Quick Gauntlet (10 Games)
-                            </button>
-                            <button
-                                onClick={async () => {
-                                    setLoading(true);
-                                    await fetch("/api/cutechess/selfplay", {
-                                        method: "POST",
-                                        headers: {"Content-Type": "application/json"},
-                                        body: JSON.stringify({
-                                            v1: null, v2: null, tc: "10+0.1", games: 10,
-                                        }),
-                                    });
-                                    setLoading(false);
-                                    fetchTasks();
-                                }}
-                                disabled={loading}
-                                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
-                            >
-                                Quick Self-Play (10 Games)
+                                Start {tourneyOpponent === "self" ? "Self-Play" : "Gauntlet"} Match
                             </button>
                         </div>
                     </div>
