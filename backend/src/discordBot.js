@@ -179,7 +179,6 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
     };
 
     const transport = new DiscordTransport({channelId, sendFn});
-    if (notifier) notifier.addTransport(transport);
 
     const pinger = healthUrl
         ? new HealthPinger({url: healthUrl, sendFn, channelId})
@@ -210,6 +209,7 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
 
     client.once(Events.ClientReady, async (c) => {
         console.log(`[Discord] Logged in as ${c.user.tag}`);
+        if (notifier) notifier.addTransport(transport); // Only add transport once we are connected
         try {
             const rest = new REST({version: "10"}).setToken(token);
             await rest.put(Routes.applicationCommands(c.user.id), {body: commands});
