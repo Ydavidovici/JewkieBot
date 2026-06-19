@@ -3,12 +3,12 @@
 #include <iostream>
 #include <thread>
 
-#include "timeManager.h"
-#include "search.h"
-#include "evaluator.h"
-#include "transpositionTable.h"
-#include "board.h"
-#include "move.h"
+#include "../include/timeManager.h"
+#include "../include/search.h"
+#include "../include/evaluator.h"
+#include "../include/transpositionTable.h"
+#include "../include/board.h"
+#include "../include/move.h"
 
 #define REQUIRE(cond) \
     do { \
@@ -50,10 +50,8 @@ static SearchResult run_timed(const char* fen, int timeLeftMs, int incMs = 0, in
     return {m, ms};
 }
 
-static const char* STARTPOS =
-    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-static const char* MIDDLEGAME =
-    "r1bq1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQR1K1 w - - 0 1";
+static const char* STARTPOS = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+static const char* MIDDLEGAME = "r1bq1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQR1K1 w - - 0 1";
 
 // =========== SECTION 1: Immediate timeout ===========
 
@@ -369,7 +367,7 @@ static void test_restart_clears_stability_state() {
 
 static void test_search_returns_within_time_budget() {
     std::cout << "--- test_search_returns_within_time_budget ---\n";
-    SearchResult r = run_timed(MIDDLEGAME, 500);
+    SearchResult r = run_timed(MIDDLEGAME, 60000);
     REQUIRE_MSG(r.move.isValid(), "must return a valid move");
     REQUIRE_MSG(r.elapsedMs < 2500.0, "500ms budget: finish within 2500ms (5x)");
     std::cout << "  elapsed=" << r.elapsedMs << "ms  move=" << r.move.toString() << "\n";

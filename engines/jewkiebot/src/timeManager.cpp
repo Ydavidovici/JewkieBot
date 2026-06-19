@@ -9,8 +9,7 @@ void TimeManager::start(uint64_t millis_left, uint64_t inc, int mtg) {
             ? static_cast<int64_t>(millis_left) - SAFETY_MS
             : 0;
 
-    const int64_t max_alloc =
-        static_cast<int64_t>(remaining * MAX_FRACTION) + static_cast<int64_t>(inc);
+    const int64_t max_alloc = static_cast<int64_t>(remaining * MAX_FRACTION) + static_cast<int64_t>(inc);
 
     const int64_t raw_soft = remaining / mtg_eff + static_cast<int64_t>(inc);
 

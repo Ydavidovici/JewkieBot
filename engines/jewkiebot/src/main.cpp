@@ -220,7 +220,8 @@ static void handle_eval(const std::string& line, Engine& engine) {
 
 static void handle_go(const std::string& line, Engine& engine) {
     PlaySettings settings{};
-    settings.depth = 8;
+
+    settings.depth = 20;
     settings.time_left_ms = 0;
     settings.increment_ms = 0;
     settings.moves_to_go = 0;

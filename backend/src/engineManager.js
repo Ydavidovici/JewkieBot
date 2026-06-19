@@ -63,7 +63,7 @@ export class UciEngine extends EventEmitter {
             });
 
             await this._sendCommand("uci", (line) => line === "uciok", null, this.handshakeTimeoutMs);
-            
+
             if (this.bookPath) {
                 await this._sendRaw(`setoption name OwnBook value true`);
                 await this._sendRaw(`setoption name BookFile value ${this.bookPath}`);
@@ -87,16 +87,17 @@ export class UciEngine extends EventEmitter {
         await this.ensureReady();
 
         const parts = ["go"];
-        if (options.depth)    parts.push(`depth ${options.depth}`);
-        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
+
+        if (options.depth) parts.push(`depth ${options.depth}`);
+        if (options.nodes) parts.push(`nodes ${options.nodes}`);
 
         if (options.moveTime) {
             parts.push(`movetime ${options.moveTime}`);
         } else {
             if (options.whiteTime) parts.push(`wtime ${options.whiteTime}`);
             if (options.blackTime) parts.push(`btime ${options.blackTime}`);
-            if (options.whiteInc  != null) parts.push(`winc ${options.whiteInc}`);
-            if (options.blackInc  != null) parts.push(`binc ${options.blackInc}`);
+            if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
+            if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
         }
 
         let safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
@@ -125,16 +126,16 @@ export class UciEngine extends EventEmitter {
         await this.ensureReady();
 
         const parts = ["go"];
-        if (options.depth)    parts.push(`depth ${options.depth}`);
-        if (options.nodes)    parts.push(`nodes ${options.nodes}`);
+        if (options.depth) parts.push(`depth ${options.depth}`);
+        if (options.nodes) parts.push(`nodes ${options.nodes}`);
 
         if (options.moveTime) {
             parts.push(`movetime ${options.moveTime}`);
         } else {
             if (options.whiteTime) parts.push(`wtime ${options.whiteTime}`);
             if (options.blackTime) parts.push(`btime ${options.blackTime}`);
-            if (options.whiteInc  != null) parts.push(`winc ${options.whiteInc}`);
-            if (options.blackInc  != null) parts.push(`binc ${options.blackInc}`);
+            if (options.whiteInc != null) parts.push(`winc ${options.whiteInc}`);
+            if (options.blackInc != null) parts.push(`binc ${options.blackInc}`);
         }
 
         let safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
@@ -172,11 +173,11 @@ export class UciEngine extends EventEmitter {
             return {
                 bestMove: response.split(" ")[1] || currentBestMove,
                 scoreCp,
-                isMate
+                isMate,
             };
         } catch (e) {
             console.error("[Engine] Error during 'goWithEval':", e);
-            return { bestMove: currentBestMove !== "(none)" ? currentBestMove : "0000", scoreCp: null, isMate: false };
+            return {bestMove: currentBestMove !== "(none)" ? currentBestMove : "0000", scoreCp: null, isMate: false};
         }
     }
 
@@ -205,7 +206,8 @@ export class UciEngine extends EventEmitter {
         if (this.process) {
             try {
                 this.process.kill(9);
-            } catch (e) {}
+            } catch (e) {
+            }
             this.process = null;
         }
 
@@ -330,7 +332,6 @@ export class UciEngine extends EventEmitter {
     }
 
 
-
     async bench(options = {}) {
         await this.ensureReady();
 
@@ -398,7 +399,7 @@ export class EngineManager {
                 user: process.env.REMOTE_SSH_USER,
                 host: process.env.REMOTE_SSH_HOST,
                 keyPath: process.env.REMOTE_SSH_KEY_PATH,
-                stockfishPath: process.env.REMOTE_STOCKFISH_PATH
+                stockfishPath: process.env.REMOTE_STOCKFISH_PATH,
             };
             engine = new SshUciEngine(sshConfig, {
                 ...this.engineOptions,
@@ -465,7 +466,7 @@ export class EngineManager {
             engine.stop().catch(e => {
                 console.error("[Manager] Error during mass shutdown:", e);
                 this.notifier.warn("[EngineManager] Error during mass shutdown", {message: e?.message});
-            })
+            }),
         );
 
         this.engines.clear();

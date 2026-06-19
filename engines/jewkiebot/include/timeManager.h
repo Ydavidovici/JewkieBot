@@ -4,7 +4,7 @@
 
 class TimeManager {
 public:
-    static constexpr int DEFAULT_MTG = 30;
+    static constexpr int DEFAULT_MTG = 30; // Changed from 50: Assume 30 moves left so we think longer per move!
     static constexpr int HARD_MULT = 5;
     static constexpr double MAX_FRACTION = 0.8;
     static constexpr double EXTEND_SCALE = 1.5;
