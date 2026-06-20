@@ -1,6 +1,6 @@
 import {OPENINGS} from "../openings";
 import {EngineManager} from "../engineManager.ts";
-import {Notifier} from "../notifier.ts";
+import {Notifier} from "../notifier";
 import {GameAnalyzer} from "../gameAnalyzer";
 import path from "node:path";
 

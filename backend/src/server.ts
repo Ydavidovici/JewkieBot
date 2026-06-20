@@ -4,13 +4,15 @@ import cors from "cors";
 import path from "node:path";
 import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.ts";
 import {LichessBot} from "./lichessBot.js";
-import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.ts";
+import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {taskManager} from "./taskManager";
-import {chessComController} from "./controllers/chessComController.js";
-import {tournamentController} from "./controllers/tournamentController.js";
-import {pgnController} from "./controllers/pgnController.js";
-import {tasksController} from "./controllers/tasksController.js";
+import {PgnManager} from "./pgnManager.js";
+import {dbClient} from "./dbClient.js";
+import {ChessComController} from "./controllers/chessComController.js";
+import {TournamentController} from "./controllers/tournamentController.js";
+import {PgnController} from "./controllers/pgnController.js";
+import {TasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
 import {LichessController} from "./controllers/lichessController.ts";
 
@@ -19,6 +21,11 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
 
     const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
     const lichessController = new LichessController(getToken, lichessEngineFactory, maxConcurrentGames, notifier, BotClass);
+    const pgnManager = new PgnManager(dbClient);
+    const tasksController = new TasksController(taskManager);
+    const pgnController = new PgnController(taskManager, pgnManager);
+    const chessComController = new ChessComController(pgnManager);
+    const tournamentController = new TournamentController(taskManager, pgnManager);
 
     app.use(cors({
         origin: "*",

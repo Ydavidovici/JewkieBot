@@ -18,7 +18,7 @@ export interface UciEngineOptions {
 }
 
 export interface EngineManagerOptions {
-    engineOptions?: UciEngineOptions;
+    engineOptions?: Partial<UciEngineOptions>;
     maxEngines?: number;
     notifier?: any;
 }

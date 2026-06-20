@@ -146,7 +146,7 @@ export class HealthPinger {
     }
 }
 
-export async function createDiscordBot({token, channelId, notifier, healthUrl, apiUrl, intents}) {
+export async function createDiscordBot({token, channelId, notifier, healthUrl, apiUrl, intents = null}) {
     if (!token) throw new Error("createDiscordBot requires token");
     if (!channelId) throw new Error("createDiscordBot requires channelId");
 

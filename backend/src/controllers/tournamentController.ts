@@ -1,7 +1,4 @@
 import {CutechessManager} from "../cutechessManager.js";
-import {taskManager} from "../taskManager.js";
-import {PgnManager} from "../pgnManager.js";
-import {dbClient} from "../dbClient.js";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -12,43 +9,54 @@ const CUTECHESS = process.platform === "win32"
 const ENGINES_DIR = path.join(process.cwd(), "..", "engines");
 const STORAGE_DIR = path.join(process.cwd(), "storage");
 
-export const tournamentController = {
-    async runGauntlet(req, res) {
+export class TournamentController {
+    constructor(
+        private taskManager: any,
+        private pgnManager: any
+    ) {}
+
+    private attachProgressInterceptor(taskId: string, totalGames: number) {
+        let completedGames = 0;
+        const originalStdoutWrite = process.stdout.write;
+
+        const progressInterceptor = (chunk: any, encoding: any, callback: any) => {
+            const text = chunk.toString();
+            if (text.includes("Finished game")) {
+                completedGames++;
+                this.taskManager.updateTaskProgress(taskId, {completed: completedGames, total: totalGames}).catch(console.error);
+            }
+            return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
+        };
+
+        process.stdout.write = progressInterceptor as any;
+
+        return () => {
+            process.stdout.write = originalStdoutWrite;
+        };
+    }
+
+    runGauntlet = async (req: any, res: any) => {
         try {
             const {myEngine, opponents, tc, games, concurrency, preset} = req.body;
 
             const taskId = `tourney-${Date.now()}`;
-            await taskManager.createTask(taskId, "tournament", req.body);
+            await this.taskManager.createTask(taskId, "tournament", req.body);
 
             res.json({status: "started", taskId});
 
-            await (async () => {
+            (async () => {
                 const manager = new CutechessManager(CUTECHESS);
-
-                let completedGames = 0;
-
-                const originalStdoutWrite = process.stdout.write;
-
-                const progressInterceptor = (chunk, encoding, callback) => {
-                    const text = chunk.toString();
-                    if (text.includes("Finished game")) {
-                        completedGames++;
-                        taskManager.updateTaskProgress(taskId, {completed: completedGames, total: games}).catch(console.error);
-                    }
-                    return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
-                };
-
-                process.stdout.write = progressInterceptor;
+                const detach = this.attachProgressInterceptor(taskId, games);
 
                 try {
                     const now = new Date();
-                    const pad = (n) => n.toString().padStart(2, "0");
+                    const pad = (n: number) => n.toString().padStart(2, "0");
                     const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
                     const pgnOut = path.join(STORAGE_DIR, `tournament_${timestamp}.pgn`);
 
                     const rounds = Math.max(1, Math.ceil(parseInt(games, 10) / (opponents.length * 2)));
 
-                    const resolvedOpponents = opponents.map(opp => {
+                    const resolvedOpponents = opponents.map((opp: any) => {
                         const resolvedPath = path.isAbsolute(opp.path) ? opp.path : path.join(ENGINES_DIR, opp.path);
                         return {
                             name: opp.name,
@@ -77,54 +85,42 @@ export const tournamentController = {
                         openingBook: {file: path.join(process.cwd(), "..", "tools", "UHO_4060_v1.epd"), format: "epd"},
                     });
 
-                    const pgnManager = new PgnManager(dbClient);
                     const pgnContent = fs.readFileSync(resultPgn, "utf-8");
-                    const ingestResults = await pgnManager.ingestPgnString(pgnContent);
+                    const ingestResults = await this.pgnManager.ingestPgnString(pgnContent);
 
-                    await taskManager.updateTaskStatus(taskId, "COMPLETED", {
+                    await this.taskManager.updateTaskStatus(taskId, "COMPLETED", {
                         pgnFile: resultPgn,
                         ingested: ingestResults.success,
                         failed: ingestResults.failed,
                     });
-                } catch (err) {
+                } catch (err: any) {
                     console.error(`[Tournament ${taskId}] Failed:`, err);
-                    await taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
+                    await this.taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
                 } finally {
-                    process.stdout.write = originalStdoutWrite;
+                    detach();
                 }
             })();
 
-        } catch (err) {
+        } catch (err: any) {
             res.status(500).json({error: err.message});
         }
-    },
+    }
 
-    async runSelfPlay(req, res) {
+    runSelfPlay = async (req: any, res: any) => {
         try {
             const {v1, v2, tc, games, depth, nodes} = req.body;
 
             const taskId = `selfplay-${Date.now()}`;
-            await taskManager.createTask(taskId, "selfplay", req.body);
+            await this.taskManager.createTask(taskId, "selfplay", req.body);
 
             res.json({status: "started", taskId});
 
-            await (async () => {
+            (async () => {
                 const manager = new CutechessManager(CUTECHESS);
-
-                let completedGames = 0;
-                const originalStdoutWrite = process.stdout.write;
-                const progressInterceptor = (chunk, encoding, callback) => {
-                    const text = chunk.toString();
-                    if (text.includes("Finished game")) {
-                        completedGames++;
-                        taskManager.updateTaskProgress(taskId, {completed: completedGames, total: games}).catch(console.error);
-                    }
-                    return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
-                };
-                process.stdout.write = progressInterceptor;
+                const detach = this.attachProgressInterceptor(taskId, games);
 
                 try {
-                    const getEnginePath = (version) => {
+                    const getEnginePath = (version: string) => {
                         const baseDir = path.join(ENGINES_DIR, "jewkiebot", "build");
                         return version ? path.join(baseDir, `jewkiebot-${version}${process.platform === "win32" ? ".exe" : ""}`) : path.join(baseDir, `jewkiebot${process.platform === "win32" ? ".exe" : ""}`);
                     };
@@ -156,24 +152,22 @@ export const tournamentController = {
                         pgnOut,
                     });
 
-                    // Auto ingest
-                    const pgnManager = new PgnManager(dbClient);
                     const pgnContent = fs.readFileSync(resultPgn, "utf-8");
-                    const ingestResults = await pgnManager.ingestPgnString(pgnContent);
+                    const ingestResults = await this.pgnManager.ingestPgnString(pgnContent);
 
-                    await taskManager.updateTaskStatus(taskId, "COMPLETED", {
+                    await this.taskManager.updateTaskStatus(taskId, "COMPLETED", {
                         pgnFile: resultPgn,
                         ingested: ingestResults.success,
                     });
-                } catch (err) {
+                } catch (err: any) {
                     console.error(`[SelfPlay ${taskId}] Failed:`, err);
-                    await taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
+                    await this.taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
                 } finally {
-                    process.stdout.write = originalStdoutWrite;
+                    detach();
                 }
             })();
-        } catch (err) {
+        } catch (err: any) {
             res.status(500).json({error: err.message});
         }
-    },
-};
+    }
+}

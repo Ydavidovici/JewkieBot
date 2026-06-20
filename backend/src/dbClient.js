@@ -1,5 +1,5 @@
 import {ApiTransport} from "./apiTransport.js";
-import {nullNotifier} from "./notifier.ts";
+import {nullNotifier} from "./notifier.js";
 
 const transport = new ApiTransport({
     baseUrl: process.env.DB_SERVICE_URL || "http://192.168.1.51:4001/api/v1/chess",

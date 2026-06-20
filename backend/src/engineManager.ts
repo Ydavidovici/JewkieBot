@@ -2,7 +2,7 @@ import {spawn} from "bun";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {EventEmitter} from "node:events";
-import {nullNotifier} from "./notifier.ts";
+import {nullNotifier} from "./notifier";
 import type {UciEngineOptions, SshConfig, EngineManagerOptions, EngineGoOptions, EngineCommandOptions} from "../../Shared/Types.ts";
 
 const __filename = fileURLToPath(import.meta.url);

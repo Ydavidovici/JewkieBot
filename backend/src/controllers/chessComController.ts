@@ -1,9 +1,9 @@
 import { chessComClient } from "../chessComClient.js";
-import { PgnManager } from "../pgnManager.js";
-import { dbClient } from "../dbClient.js";
 
-export const chessComController = {
-    async fetchUserGames(req, res) {
+export class ChessComController {
+    constructor(private pgnManager: any) {}
+
+    fetchUserGames = async (req: any, res: any) => {
         try {
             const { username, months = 1 } = req.body;
             if (!username) {
@@ -20,12 +20,10 @@ export const chessComController = {
 
             console.log(`[Chess.com] Found ${games.length} games. Ingesting into DB...`);
             
-            // Extract PGN strings and filter out any empty ones
-            const pgnStrings = games.map(g => g.pgn).filter(Boolean);
+            const pgnStrings = games.map((g: any) => g.pgn).filter(Boolean);
             const combinedPgn = pgnStrings.join("\n\n");
             
-            const pgnManager = new PgnManager(dbClient);
-            const results = await pgnManager.ingestPgnString(combinedPgn);
+            const results = await this.pgnManager.ingestPgnString(combinedPgn);
 
             console.log(`[Chess.com] Ingestion complete: ${results.success} success, ${results.failed} failed.`);
 
@@ -35,9 +33,9 @@ export const chessComController = {
                 failed: results.failed,
                 totalFetched: games.length
             });
-        } catch (err) {
+        } catch (err: any) {
             console.error("[Chess.com] Error fetching games:", err);
             return res.status(500).json({ error: err.message });
         }
     }
-};
+}
