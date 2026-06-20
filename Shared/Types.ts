@@ -41,3 +41,12 @@ export interface EngineCommandOptions {
     callback?: Function;
     timeoutMs?: number;
 }
+
+export interface ApiHealthResponse {
+    status: "ok" | "error";
+    engine: "ready" | "starting" | "offline";
+    engineCount: number;
+    botRunning: boolean;
+    activeGames: number;
+    uptimeSec: number;
+}
