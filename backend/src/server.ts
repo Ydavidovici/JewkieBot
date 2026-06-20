@@ -12,11 +12,13 @@ import {tournamentController} from "./controllers/tournamentController.js";
 import {pgnController} from "./controllers/pgnController.js";
 import {tasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
+import {LichessController} from "./controllers/lichessController.ts";
 
 export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
     const app = express();
 
     const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
+    const lichessController = new LichessController(getToken, lichessEngineFactory, maxConcurrentGames, notifier, BotClass);
 
     app.use(cors({
         origin: "*",
@@ -57,138 +59,15 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.get("/api/analysis/status", engineController.getAnalysisStatus);
     app.get("/api/analysis/stats", engineController.getAnalysisStats);
 
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/start", async (req, res) => {
-        if (lichessBotInstance) {
-            return res.status(400).json({error: "Bot is already running."});
-        }
-
-        const token = getToken();
-        if (!token) {
-            return res.status(400).json({error: "Missing Lichess Token"});
-        }
-
-        const instance = new BotClass(token, lichessEngineFactory, {maxConcurrentGames, notifier});
-        try {
-            await instance.start();
-            lichessBotInstance = instance;
-            notifier.info("[Server] Lichess bot started", {maxConcurrentGames});
-            res.json({status: "success", message: `Lichess Bot started (max ${maxConcurrentGames} concurrent games).`});
-        } catch (err) {
-            console.error("Failed to start Lichess Bot:", err);
-            notifier.error("[Server] Lichess bot failed to start", {message: err?.message});
-            try {
-                instance.stop();
-            } catch (_) {
-            }
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/stop", async (req, res) => {
-        if (!lichessBotInstance) {
-            return res.json({status: "ignored", message: "Bot was not running."});
-        }
-
-        try {
-            if (typeof lichessBotInstance.stop === "function") {
-                lichessBotInstance.stop();
-            }
-            lichessBotInstance = null;
-            res.json({status: "success", message: "Lichess Bot stopped."});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.get("/api/lichess/status", (req, res) => {
-        const rateLimitedFor = lichessBotInstance ? lichessBotInstance._rateLimitRemainingSec() : 0;
-        if (lichessBotInstance && !lichessBotInstance.botProfile) {
-            lichessBotInstance._ensureProfile().catch(() => {
-            });
-        }
-        res.json({
-            running: !!lichessBotInstance,
-            profile: lichessBotInstance ? lichessBotInstance.botProfile : null,
-            activeGames: lichessBotInstance ? Array.from(lichessBotInstance.activeGames) : [],
-            maxConcurrentGames: lichessBotInstance ? lichessBotInstance.maxConcurrentGames : maxConcurrentGames,
-            rateLimitedFor,
-            declinedCount: lichessBotInstance ? lichessBotInstance.recentlyDeclined.size : 0,
-        });
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/challenge/open", async (req, res) => {
-        if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
-        const {limit = 180, increment = 0, rated = true} = req.body ?? {};
-        try {
-            const result = await lichessBotInstance.createOpenChallenge(limit, increment, rated);
-            res.json({status: "success", data: result});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/challenge/ai", async (req, res) => {
-        if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
-        const {level = 1, limit = 180, increment = 0} = req.body ?? {};
-        try {
-            const result = await lichessBotInstance.createAiChallenge(level, limit, increment);
-            res.json({status: "success", data: result});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/challenge/weakest", async (req, res) => {
-        if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
-        const {limit = 180, increment = 0, rated = true} = req.body ?? {};
-        try {
-            const result = await lichessBotInstance.huntWeakestBot(limit, increment, rated);
-            res.json(result);
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/autoplay/start", (req, res) => {
-        if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
-        const {
-            limit = 180,
-            increment = 2,
-            rated = true,
-            target = 1,
-            mode = "near",
-            window = 200,
-            whiteOpeningId = null,
-            blackOpeningId = null,
-        } = req.body ?? {};
-        lichessBotInstance.startAutoplay({limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId});
-        res.json({
-            status: "success",
-            message: `Autoplay started (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${target})`,
-            autoplay: lichessBotInstance.autoplayStatus(),
-        });
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.post("/api/lichess/autoplay/stop", (req, res) => {
-        if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
-        lichessBotInstance.stopAutoplay();
-        res.json({status: "success", message: "Autoplay stopped"});
-    });
-
-    // FIXME: refactor to use the lichessController
-    app.get("/api/lichess/autoplay/status", (req, res) => {
-        if (!lichessBotInstance) return res.json({enabled: false, botRunning: false});
-        res.json(lichessBotInstance.autoplayStatus());
-    });
+    app.post("/api/lichess/start", lichessController.start);
+    app.post("/api/lichess/stop", lichessController.stop);
+    app.get("/api/lichess/status", lichessController.getStatus);
+    app.post("/api/lichess/challenge/open", lichessController.openChallenge);
+    app.post("/api/lichess/challenge/ai", lichessController.challengeAI);
+    app.post("/api/lichess/challenge/weakest", lichessController.challengeWeakest);
+    app.post("/api/lichess/autoplay/start", lichessController.startAutoplay);
+    app.post("/api/lichess/autoplay/stop", lichessController.stopAutoplay);
+    app.get("/api/lichess/autoplay/status", lichessController.getAutoPlayStatus);
 
     app.post("/api/chesscom/fetch", chessComController.fetchUserGames);
 
@@ -248,6 +127,7 @@ if (import.meta.main) {
 
     const transports = [];
     const webhookTransport = new WebhookTransport();
+
     if (webhookTransport.enabled) {
         transports.push(webhookTransport);
         console.log(`[Server] WebhookTransport enabled → ${webhookTransport.api.baseUrl}`);
