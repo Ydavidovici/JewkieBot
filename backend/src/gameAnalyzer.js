@@ -1,5 +1,5 @@
 import {dbClient as defaultDbClient} from "./dbClient.js";
-import {EngineManager} from "./engineManager.js";
+import {EngineManager} from "./engineManager.ts";
 
 export function classifyMove(cpLoss) {
     if (cpLoss === null || cpLoss === undefined) return null;

@@ -1,15 +1,15 @@
 import express from "express";
 import cors from "cors";
 import path from "node:path";
-import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.js";
+import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.ts";
 import {LichessBot} from "./lichessBot.js";
 import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.js";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {OPENINGS} from "./openings.js";
-import { chessComController } from "./controllers/chessComController.js";
-import { tournamentController } from "./controllers/tournamentController.js";
-import { pgnController } from "./controllers/pgnController.js";
-import { tasksController } from "./controllers/tasksController.js";
+import {chessComController} from "./controllers/chessComController.js";
+import {tournamentController} from "./controllers/tournamentController.js";
+import {pgnController} from "./controllers/pgnController.js";
+import {tasksController} from "./controllers/tasksController.js";
 
 export function createApp({manager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null} = {}) {
     const app = express();
@@ -26,6 +26,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         try {
             const mainEngine = manager.getEngine("Main");
 
+            // FIXME: make this a healthresponse type
             res.json({
                 status: "ok",
                 engine: mainEngine.ready ? "ready" : "starting",
@@ -39,10 +40,12 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.get("/api/openings", (req, res) => {
         res.json(OPENINGS);
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/setoption", async (req, res) => {
         try {
             const {name, value} = req.body ?? {};
@@ -59,6 +62,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/analysis", async (req, res) => {
         try {
             const {fen, depth = 10} = req.body ?? {};
@@ -76,6 +80,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/go", async (req, res) => {
         try {
             const {fen, moves, options} = req.body ?? {};
@@ -90,11 +95,13 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/reset", async (req, res) => {
         await manager.getEngine("Main").uciNewGame();
         res.json({status: "reset_complete"});
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/bench", async (req, res) => {
         try {
             const {mode = "depth", depth = 10, timeLimit = 30000, evalTime = 2000} = req.body ?? {};
@@ -112,6 +119,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.get("/api/engine/stream", async (req, res) => {
         try {
             let fen = req.query.fen || "startpos";
@@ -130,8 +138,10 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
             const stockfish = analyzer ? manager.reserveEngine(`${streamId}-sf`, analyzer.stockfishPath) : null;
 
             const cleanup = async () => {
-                await manager.shutdownEngine(`${streamId}-jb`).catch(() => {});
-                if (stockfish) await manager.shutdownEngine(`${streamId}-sf`).catch(() => {});
+                await manager.shutdownEngine(`${streamId}-jb`).catch(() => {
+                });
+                if (stockfish) await manager.shutdownEngine(`${streamId}-sf`).catch(() => {
+                });
             };
 
             req.on("close", cleanup);
@@ -146,15 +156,15 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
 
             await jewkiebot.start();
             jewkiebot.on("line", forwardLine("jewkiebot"));
-            jewkiebot._sendRaw("setoption name OwnBook value false");
+            await jewkiebot._sendCommand("setoption name OwnBook value false");
             await jewkiebot.position(fen);
-            jewkiebot._sendRaw(`go infinite`);
+            await jewkiebot._sendCommand(`go infinite`);
 
             if (stockfish) {
                 await stockfish.start();
                 stockfish.on("line", forwardLine("stockfish"));
                 await stockfish.position(fen);
-                stockfish._sendRaw(`go infinite`);
+                await stockfish._sendCommand(`go infinite`);
             }
 
         } catch (err) {
@@ -164,6 +174,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/cancel", async (req, res) => {
         try {
             await manager.shutdownEngine("Main");
@@ -175,6 +186,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/start", async (req, res) => {
         if (lichessBotInstance) {
             return res.status(400).json({error: "Bot is already running."});
@@ -202,6 +214,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/stop", async (req, res) => {
         if (!lichessBotInstance) {
             return res.json({status: "ignored", message: "Bot was not running."});
@@ -218,6 +231,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.get("/api/lichess/status", (req, res) => {
         const rateLimitedFor = lichessBotInstance ? lichessBotInstance._rateLimitRemainingSec() : 0;
         if (lichessBotInstance && !lichessBotInstance.botProfile) {
@@ -234,6 +248,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         });
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/challenge/open", async (req, res) => {
         if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
         const {limit = 180, increment = 0, rated = true} = req.body ?? {};
@@ -245,6 +260,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/challenge/ai", async (req, res) => {
         if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
         const {level = 1, limit = 180, increment = 0} = req.body ?? {};
@@ -256,6 +272,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/challenge/weakest", async (req, res) => {
         if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
         const {limit = 180, increment = 0, rated = true} = req.body ?? {};
@@ -267,6 +284,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/autoplay/start", (req, res) => {
         if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
         const {
@@ -277,27 +295,30 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
             mode = "near",
             window = 200,
             whiteOpeningId = null,
-            blackOpeningId = null
+            blackOpeningId = null,
         } = req.body ?? {};
         lichessBotInstance.startAutoplay({limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId});
         res.json({
             status: "success",
-            message: `Autoplay started (${limit}+${increment} ${rated ? 'rated' : 'casual'}, target=${target})`,
-            autoplay: lichessBotInstance.autoplayStatus()
+            message: `Autoplay started (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${target})`,
+            autoplay: lichessBotInstance.autoplayStatus(),
         });
     });
 
+    // FIXME: refactor to use the lichessController
     app.post("/api/lichess/autoplay/stop", (req, res) => {
         if (!lichessBotInstance) return res.status(400).json({error: "Bot not running"});
         lichessBotInstance.stopAutoplay();
         res.json({status: "success", message: "Autoplay stopped"});
     });
 
+    // FIXME: refactor to use the lichessController
     app.get("/api/lichess/autoplay/status", (req, res) => {
         if (!lichessBotInstance) return res.json({enabled: false, botRunning: false});
         res.json(lichessBotInstance.autoplayStatus());
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/analysis/run", (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured (no Stockfish path)"});
         if (analyzer.isRunning) return res.status(409).json({status: "already_running", progress: analyzer.progress});
@@ -310,6 +331,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         res.json({status: "started", progress: analyzer.progress});
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/analysis/stop", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
         if (!analyzer.isRunning) return res.json({status: "not_running"});
@@ -317,22 +339,24 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         res.json({status: "stopped"});
     });
 
+    // FIXME: refactor to use the engineController
     app.get("/api/analysis/status", (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
         res.json({running: analyzer.isRunning, progress: analyzer.progress});
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/analysis/start", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
         if (analyzer.isRunning) return res.status(400).json({error: "Analysis already running"});
-        
+
         try {
-            const { playerName } = req.body;
+            const {playerName} = req.body;
             const taskId = `analysis-${Date.now()}`;
             tasksController._taskManager = (await import("./taskManager.js")).taskManager;
-            await tasksController._taskManager.createTask(taskId, "teacher_analysis", { playerName });
+            await tasksController._taskManager.createTask(taskId, "teacher_analysis", {playerName});
 
-            res.json({ status: "started", taskId });
+            res.json({status: "started", taskId});
 
             (async () => {
                 try {
@@ -345,12 +369,12 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
 
                     await analyzer.analyzeAll(playerName || null);
                     clearInterval(interval);
-                    
-                    await tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", { 
-                        gamesAnalyzed: analyzer.progress.done 
+
+                    await tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", {
+                        gamesAnalyzed: analyzer.progress.done,
                     });
                 } catch (err) {
-                    await tasksController._taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await tasksController._taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
                 }
             })();
         } catch (err) {
@@ -358,44 +382,46 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/analysis/stop", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
         try {
             await analyzer.stop();
-            res.json({ status: "stopped" });
+            res.json({status: "stopped"});
         } catch (err) {
             res.status(500).json({error: err.message});
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.post("/api/engine/build", async (req, res) => {
         try {
             const taskId = `build-engine-${Date.now()}`;
-            const { taskManager } = await import("./taskManager.js");
+            const {taskManager} = await import("./taskManager.js");
             await taskManager.createTask(taskId, "engine_build", {});
 
-            res.json({ status: "started", taskId });
+            res.json({status: "started", taskId});
 
             (async () => {
                 try {
-                    const { spawn } = await import("child_process");
+                    const {spawn} = await import("child_process");
                     const buildScript = path.join(process.cwd(), "src", "scripts", "buildEngine.js");
-                    
-                    const child = spawn("bun", [buildScript], { cwd: path.join(process.cwd(), "src", "scripts") });
-                    
+
+                    const child = spawn("bun", [buildScript], {cwd: path.join(process.cwd(), "src", "scripts")});
+
                     let output = "";
                     child.stdout.on("data", data => output += data.toString());
                     child.stderr.on("data", data => output += data.toString());
-                    
+
                     child.on("close", async code => {
                         if (code === 0) {
-                            await taskManager.updateTaskStatus(taskId, "COMPLETED", { output });
+                            await taskManager.updateTaskStatus(taskId, "COMPLETED", {output});
                         } else {
-                            await taskManager.updateTaskStatus(taskId, "FAILED", { error: `Exit code ${code}`, output });
+                            await taskManager.updateTaskStatus(taskId, "FAILED", {error: `Exit code ${code}`, output});
                         }
                     });
                 } catch (err) {
-                    await taskManager.updateTaskStatus(taskId, "FAILED", { error: err.message });
+                    await taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
                 }
             })();
         } catch (err) {
@@ -403,6 +429,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         }
     });
 
+    // FIXME: refactor to use the engineController
     app.get("/api/analysis/stats", async (req, res) => {
         if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
 
@@ -434,7 +461,7 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
     app.use(express.static(distPath));
     app.get(/.*/, (req, res) => {
         // Only serve index.html for non-API routes (API routes should 404 naturally if not matched above)
-        if (req.path.startsWith('/api/')) {
+        if (req.path.startsWith("/api/")) {
             return res.status(404).json({error: "Not found"});
         }
         res.sendFile(path.join(distPath, "index.html"));
@@ -493,8 +520,8 @@ if (import.meta.main) {
         maxEngines: ENGINE_HARD_CAP,
         notifier,
         engineOptions: {
-            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin")
-        }
+            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin"),
+        },
     });
 
     await manager.registerEngine("Main", JEWKIEBOT_PATH);
@@ -505,10 +532,11 @@ if (import.meta.main) {
         if (!manager.hasCapacity()) {
             throw new EngineCapReached(manager.maxEngines, manager.count());
         }
-        return new UciEngine(JEWKIEBOT_PATH, {
+        return new UciEngine({
+            cmd: JEWKIEBOT_PATH,
             notifier,
             label,
-            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin")
+            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin"),
         });
     };
 
@@ -521,31 +549,31 @@ if (import.meta.main) {
     if (!stockfishExists && !isWindows) {
         console.log(`[Server] Stockfish not found at ${STOCKFISH_PATH}. Downloading...`);
         try {
-            const { spawnSync } = await import("child_process");
+            const {spawnSync} = await import("child_process");
             const fs = await import("fs");
             const destDir = path.dirname(STOCKFISH_PATH);
-            fs.mkdirSync(destDir, { recursive: true });
-            
+            fs.mkdirSync(destDir, {recursive: true});
+
             const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar";
             const tarPath = path.join(destDir, "stockfish.tar");
-            
+
             console.log(`[Server] Fetching ${url} using Bun...`);
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-            
+
             const size = res.headers.get("content-length");
             const sizeMB = size ? (parseInt(size) / 1024 / 1024).toFixed(1) + " MB" : "a large file";
             console.log(`[Server] Downloading ${sizeMB}... this may take a minute and has no progress bar. Please wait...`);
-            
+
             const buffer = await res.arrayBuffer();
             await Bun.write(tarPath, buffer);
-            
+
             console.log(`[Server] Download complete. Extracting archive...`);
             const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64 ${STOCKFISH_PATH} 2>/dev/null || true && chmod +x ${STOCKFISH_PATH} 2>/dev/null || true`;
-            spawnSync("bash", ["-c", cmd], { stdio: "inherit" });
-            
+            spawnSync("bash", ["-c", cmd], {stdio: "inherit"});
+
             fs.unlinkSync(tarPath);
-            
+
             stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
             if (stockfishExists) console.log("[Server] Stockfish downloaded successfully.");
         } catch (err) {
@@ -565,7 +593,7 @@ if (import.meta.main) {
         mainEnginePath: JEWKIEBOT_PATH,
         maxConcurrentGames: LICHESS_MAX_GAMES,
         notifier,
-        analyzer
+        analyzer,
     });
 
     const PORT = process.env.PORT || 8000;
@@ -575,7 +603,7 @@ if (import.meta.main) {
         notifier.info("[Server] Backend started", {
             port: PORT,
             engineCap: ENGINE_HARD_CAP,
-            lichessMax: LICHESS_MAX_GAMES
+            lichessMax: LICHESS_MAX_GAMES,
         });
     });
 
@@ -607,10 +635,23 @@ if (import.meta.main) {
         shuttingDown = true;
 
         console.log(`\n[Server] Shutting down (${reason})...`);
-        try { await notifier.flush(); } catch (_) {}
-        try { server.close(); } catch (_) {}
-        try { if (analyzer) await analyzer.stop(); } catch (_) {}
-        try { await manager.shutdownAll(); } catch (e) { console.error("[Server] shutdownAll error:", e); }
+        try {
+            await notifier.flush();
+        } catch (_) {
+        }
+        try {
+            server.close();
+        } catch (_) {
+        }
+        try {
+            if (analyzer) await analyzer.stop();
+        } catch (_) {
+        }
+        try {
+            await manager.shutdownAll();
+        } catch (e) {
+            console.error("[Server] shutdownAll error:", e);
+        }
         if (discordBot) {
             try {
                 await discordBot.stop();
@@ -633,7 +674,7 @@ if (import.meta.main) {
         try {
             await notifier.fatal(`[Server] ${kind}: process exiting`, {
                 message: err?.message,
-                stack: err?.stack?.split("\n").slice(0, 5).join("\n")
+                stack: err?.stack?.split("\n").slice(0, 5).join("\n"),
             });
         } catch (_) {
         }

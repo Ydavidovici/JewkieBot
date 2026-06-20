@@ -7,12 +7,11 @@ const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 const LEVEL_EMOJI = {info: ":information_source:", warn: ":warning:", error: ":x:", fatal: ":rotating_light:"};
 
 export class DiscordTransport {
-    constructor({channelId, sendFn, minLevel = "info", flushIntervalMs = DEFAULT_FLUSH_INTERVAL_MS} = {}) {
+    constructor({channelId, sendFn, flushIntervalMs = DEFAULT_FLUSH_INTERVAL_MS} = {}) {
         if (!channelId) throw new Error("DiscordTransport requires channelId");
         if (typeof sendFn !== "function") throw new Error("DiscordTransport requires sendFn(channelId, content)");
         this.channelId = channelId;
         this.sendFn = sendFn;
-        this.minLevel = minLevel;
         this.flushIntervalMs = flushIntervalMs;
         this.buffer = [];
         this.timer = null;
@@ -38,15 +37,8 @@ export class DiscordTransport {
         }
         if (this.buffer.length === 0) return;
 
-        let EmbedBuilder;
-        try {
-            const discord = await import("discord.js");
-            EmbedBuilder = discord.EmbedBuilder;
-        } catch (err) {
-            console.error("[Discord] Cannot flush embeds without discord.js", err);
-            return;
-        }
-
+        const discord = await import("discord.js")
+        const EmbedBuilder = discord.EmbedBuilder;
         const drained = this.buffer.splice(0);
         const embedChunks = [];
         let currentChunk = [];
@@ -158,14 +150,10 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
     if (!token) throw new Error("createDiscordBot requires token");
     if (!channelId) throw new Error("createDiscordBot requires channelId");
 
-    let discord;
-    try {
-        discord = await import("discord.js");
-    } catch (err) {
-        throw new Error("discord.js is not installed. Run: bun add discord.js");
-    }
+    const discord = await import("discord.js");
 
     const {Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder} = discord;
+
     const client = new Client({
         intents: intents ?? [GatewayIntentBits.Guilds],
     });
@@ -204,12 +192,16 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
             .setDescription("Manage the Lichess bot")
             .addSubcommand(sub => sub.setName("start").setDescription("Start the Lichess bot"))
             .addSubcommand(sub => sub.setName("stop").setDescription("Stop the Lichess bot"))
-            .addSubcommand(sub => sub.setName("status").setDescription("Check Lichess bot status")),
+            .addSubcommand(sub => sub.setName("status").setDescription("Check Lichess bot status"))
+            .addSubcommand(sub => sub.setName("autoplay start").setDescription("Start autoplay"))
+            .addSubcommand(sub => sub.setName("autoplay stop").setDescription("Stop autoplay"))
     ].map(c => c.toJSON());
 
     client.once(Events.ClientReady, async (c) => {
         console.log(`[Discord] Logged in as ${c.user.tag}`);
-        if (notifier) notifier.addTransport(transport); // Only add transport once we are connected
+
+        if (notifier) notifier.addTransport(transport);
+
         try {
             const rest = new REST({version: "10"}).setToken(token);
             await rest.put(Routes.applicationCommands(c.user.id), {body: commands});
@@ -274,6 +266,12 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
                     } else if (sub === "status") {
                         const data = await api.get("/lichess/status");
                         await interaction.editReply(`**Lichess Bot Status**\nRunning: ${data.running ? ":white_check_mark: Yes" : ":x: No"}\nActive Games: ${data.activeGames?.length || 0}\nRate Limited: ${data.rateLimitedFor > 0 ? `Yes (${data.rateLimitedFor}s)` : "No"}`);
+                    } else if (sub === "autoplay start") {
+                        const data = await api.get("/lichess/autoplay/start");
+                        await interaction.editReply(data.message || data.status || "Started.");
+                    } else if (sub === "autoplay stop") {
+                        const data = await api.get("/lichess/autoplay/stop");
+                        await interaction.editReply(data.message || data.status || "Stopped");
                     }
                 } catch (err) {
                     const sub = interaction.options.getSubcommand();

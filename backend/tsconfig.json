@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "esnext",
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "strict": false,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "allowJs": true,
+        "noEmit": true
+    },
+    "include": [
+        "src/**/*",
+        "tests/**/*",
+        "../Shared/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}

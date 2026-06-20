@@ -1,4 +1,4 @@
-import {UciEngine} from "../src/engineManager.js";
+import {UciEngine} from "../src/engineManager.ts";
 
 const engine = new UciEngine();
 

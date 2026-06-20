@@ -85,7 +85,7 @@ static void handle_uci(const std::string& line, Engine& engine) {
     #endif
 
     std::cout << "id name Chess-Engine v" << ENGINE_VERSION << "\n";
-    std::cout << "id author Antigravity\n";
+    std::cout << "id author Yaakov Davidovici\n";
 
     // TODO: OwnBook advertises "default true" but is effectively off until a BookFile is
     // loaded. Consider advertising "default false" to match actual behaviour, or set
