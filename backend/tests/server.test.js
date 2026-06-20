@@ -86,7 +86,7 @@ mock.module("../src/engineManager.js", () => ({
 
 
 
-const { createApp } = await import("../src/server.js");
+const { createApp } = await import("../src/server.ts");
 
 let server;
 let baseUrl;

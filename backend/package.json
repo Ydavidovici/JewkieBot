@@ -4,8 +4,8 @@
     "type": "module",
     "private": true,
     "scripts": {
-        "start": "bun run src/server.js",
-        "dev": "bun --hot src/server.js",
+        "start": "bun run src/server.ts",
+        "dev": "bun --hot src/server.ts",
         "build:engine": "bun run src/scripts/buildEngine.js",
         "test": "bun test",
         "tourney": "bun run src/scripts/runTourney.js",

@@ -1,6 +1,6 @@
 import {dbClient} from "./dbClient.js";
-import {Notifier} from "./notifier.js";
-import {nullNotifier} from "./notifier.js";
+import {Notifier} from "./notifier.ts";
+import {nullNotifier} from "./notifier.ts";
 import {OPENINGS} from "./openings.js";
 import {ApiTransport} from "./apiTransport.js";
 

@@ -1,18 +1,23 @@
+import {ApiHealthResponse} from "../../Shared/Types.ts";
+
 import express from "express";
 import cors from "cors";
 import path from "node:path";
 import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.ts";
 import {LichessBot} from "./lichessBot.js";
-import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.js";
+import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier.ts";
 import {GameAnalyzer} from "./gameAnalyzer.js";
-import {OPENINGS} from "./openings.js";
 import {chessComController} from "./controllers/chessComController.js";
 import {tournamentController} from "./controllers/tournamentController.js";
 import {pgnController} from "./controllers/pgnController.js";
 import {tasksController} from "./controllers/tasksController.js";
+import {EngineController} from "./controllers/engineController.js";
+import {taskManager} from "./taskManager";
 
-export function createApp({manager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null} = {}) {
+export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
     const app = express();
+
+    const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
 
     app.use(cors({
         origin: "*",
@@ -22,169 +27,37 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
 
     let lichessBotInstance = null;
 
-    app.get("/api/health", (req, res) => {
+    app.get("/api/health", (req: any, res: any) => {
         try {
-            const mainEngine = manager.getEngine("Main");
+            const mainEngine = engineManager.getEngine("Main");
 
-            // FIXME: make this a healthresponse type
             res.json({
                 status: "ok",
                 engine: mainEngine.ready ? "ready" : "starting",
-                engineCount: manager.count(),
+                engineCount: engineManager.count(),
                 botRunning: !!lichessBotInstance,
                 activeGames: lichessBotInstance ? lichessBotInstance.activeGames.size : 0,
                 uptimeSec: Math.round(process.uptime()),
-            });
+            } satisfies ApiHealthResponse);
         } catch (err) {
             res.status(503).json({status: "degraded", error: err.message});
         }
     });
 
-    // FIXME: refactor to use the engineController
-    app.get("/api/openings", (req, res) => {
-        res.json(OPENINGS);
-    });
+    app.get("/api/openings", engineController.getOpenings);
+    app.post("/api/engine/build", engineController.buildEngine);
+    app.post("/api/engine/setoption", engineController.setOptions);
+    app.post("/api/engine/go", engineController.go);
+    app.post("/api/engine/reset", engineController.reset);
+    app.post("/api/engine/bench", engineController.bench);
+    app.get("/api/engine/stream", engineController.stream);
+    app.post("/api/engine/cancel", engineController.cancel);
+    app.post("/api/engine/analyze", engineController.analyze);
+    app.post("/api/analysis/run", engineController.runAnalysis);
+    app.post("/api/analysis/stop", engineController.stopAnalysis);
+    app.get("/api/analysis/status", engineController.getAnalysisStatus);
+    app.get("/api/analysis/stats", engineController.getAnalysisStats);
 
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/setoption", async (req, res) => {
-        try {
-            const {name, value} = req.body ?? {};
-
-            if (!name) return res.status(400).json({error: "Option name required"});
-
-            const mainEngine = manager.getEngine("Main");
-            await mainEngine.setOption(name, value);
-
-            res.json({status: "success"});
-        } catch (err) {
-            console.error("SetOption Error:", err);
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/analysis", async (req, res) => {
-        try {
-            const {fen, depth = 10} = req.body ?? {};
-
-            if (!fen) return res.status(400).json({error: "FEN required"});
-
-            const mainEngine = manager.getEngine("Main");
-            await mainEngine.position(fen);
-            const bestMove = await mainEngine.go({depth});
-
-            res.json({bestMove, depth});
-        } catch (err) {
-            console.error("Analysis Error:", err);
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/go", async (req, res) => {
-        try {
-            const {fen, moves, options} = req.body ?? {};
-            const mainEngine = manager.getEngine("Main");
-
-            await mainEngine.position(fen || "startpos", moves || []);
-            const bestMove = await mainEngine.go(options || {depth: 7});
-
-            res.json({bestMove});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/reset", async (req, res) => {
-        await manager.getEngine("Main").uciNewGame();
-        res.json({status: "reset_complete"});
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/bench", async (req, res) => {
-        try {
-            const {mode = "depth", depth = 10, timeLimit = 30000, evalTime = 2000} = req.body ?? {};
-            console.log(`Starting benchmark [Mode: ${mode}, Depth: ${depth}, Time: ${timeLimit}ms]...`);
-
-            const benchId = `bench-${Date.now()}`;
-            const benchEngine = await manager.registerEngine(benchId, mainEnginePath);
-            const results = await benchEngine.bench({mode, depth, timeLimit, evalTime});
-            await manager.shutdownEngine(benchId);
-
-            console.log("Benchmark results:", results);
-            res.json({status: "success", data: results});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.get("/api/engine/stream", async (req, res) => {
-        try {
-            let fen = req.query.fen || "startpos";
-            if (fen === "start") {
-                fen = "startpos";
-            }
-            const depth = parseInt(req.query.depth) || 20;
-
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache");
-            res.setHeader("Connection", "keep-alive");
-            res.flushHeaders();
-
-            const streamId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            const jewkiebot = manager.reserveEngine(`${streamId}-jb`, mainEnginePath);
-            const stockfish = analyzer ? manager.reserveEngine(`${streamId}-sf`, analyzer.stockfishPath) : null;
-
-            const cleanup = async () => {
-                await manager.shutdownEngine(`${streamId}-jb`).catch(() => {
-                });
-                if (stockfish) await manager.shutdownEngine(`${streamId}-sf`).catch(() => {
-                });
-            };
-
-            req.on("close", cleanup);
-
-            const forwardLine = (engineName) => (line) => {
-                if (line.startsWith("info depth") || line.startsWith("bestmove")) {
-                    res.write(`data: ${JSON.stringify({engine: engineName, line})}\n\n`);
-                }
-            };
-
-            console.log(`[Stream] Incoming stream request for FEN: ${fen}`);
-
-            await jewkiebot.start();
-            jewkiebot.on("line", forwardLine("jewkiebot"));
-            await jewkiebot._sendCommand("setoption name OwnBook value false");
-            await jewkiebot.position(fen);
-            await jewkiebot._sendCommand(`go infinite`);
-
-            if (stockfish) {
-                await stockfish.start();
-                stockfish.on("line", forwardLine("stockfish"));
-                await stockfish.position(fen);
-                await stockfish._sendCommand(`go infinite`);
-            }
-
-        } catch (err) {
-            console.error("Stream error:", err);
-            res.write(`event: error\ndata: ${err.message}\n\n`);
-            res.end();
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/cancel", async (req, res) => {
-        try {
-            await manager.shutdownEngine("Main");
-            await manager.registerEngine("Main", mainEnginePath);
-            res.json({status: "success", message: "Engine reset to cancel task."});
-        } catch (err) {
-            console.error("Cancel failed:", err);
-            res.status(500).json({error: err.message});
-        }
-    });
 
     // FIXME: refactor to use the lichessController
     app.post("/api/lichess/start", async (req, res) => {
@@ -318,142 +191,14 @@ export function createApp({manager, lichessEngineFactory, mainEnginePath, maxCon
         res.json(lichessBotInstance.autoplayStatus());
     });
 
-    // FIXME: refactor to use the engineController
-    app.post("/api/analysis/run", (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured (no Stockfish path)"});
-        if (analyzer.isRunning) return res.status(409).json({status: "already_running", progress: analyzer.progress});
-
-        analyzer.analyzeAll().catch(err => {
-            console.error("[Analysis] analyzeAll failed:", err);
-            notifier.error("[Analysis] analyzeAll failed", {message: err?.message});
-        });
-
-        res.json({status: "started", progress: analyzer.progress});
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/analysis/stop", async (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
-        if (!analyzer.isRunning) return res.json({status: "not_running"});
-        await analyzer.stop();
-        res.json({status: "stopped"});
-    });
-
-    // FIXME: refactor to use the engineController
-    app.get("/api/analysis/status", (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
-        res.json({running: analyzer.isRunning, progress: analyzer.progress});
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/analysis/start", async (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
-        if (analyzer.isRunning) return res.status(400).json({error: "Analysis already running"});
-
-        try {
-            const {playerName} = req.body;
-            const taskId = `analysis-${Date.now()}`;
-            tasksController._taskManager = (await import("./taskManager.js")).taskManager;
-            await tasksController._taskManager.createTask(taskId, "teacher_analysis", {playerName});
-
-            res.json({status: "started", taskId});
-
-            (async () => {
-                try {
-                    // Update progress periodically
-                    const interval = setInterval(async () => {
-                        if (analyzer.isRunning) {
-                            await tasksController._taskManager.updateTaskProgress(taskId, analyzer.progress);
-                        }
-                    }, 2000);
-
-                    await analyzer.analyzeAll(playerName || null);
-                    clearInterval(interval);
-
-                    await tasksController._taskManager.updateTaskStatus(taskId, "COMPLETED", {
-                        gamesAnalyzed: analyzer.progress.done,
-                    });
-                } catch (err) {
-                    await tasksController._taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
-                }
-            })();
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/analysis/stop", async (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
-        try {
-            await analyzer.stop();
-            res.json({status: "stopped"});
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.post("/api/engine/build", async (req, res) => {
-        try {
-            const taskId = `build-engine-${Date.now()}`;
-            const {taskManager} = await import("./taskManager.js");
-            await taskManager.createTask(taskId, "engine_build", {});
-
-            res.json({status: "started", taskId});
-
-            (async () => {
-                try {
-                    const {spawn} = await import("child_process");
-                    const buildScript = path.join(process.cwd(), "src", "scripts", "buildEngine.js");
-
-                    const child = spawn("bun", [buildScript], {cwd: path.join(process.cwd(), "src", "scripts")});
-
-                    let output = "";
-                    child.stdout.on("data", data => output += data.toString());
-                    child.stderr.on("data", data => output += data.toString());
-
-                    child.on("close", async code => {
-                        if (code === 0) {
-                            await taskManager.updateTaskStatus(taskId, "COMPLETED", {output});
-                        } else {
-                            await taskManager.updateTaskStatus(taskId, "FAILED", {error: `Exit code ${code}`, output});
-                        }
-                    });
-                } catch (err) {
-                    await taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
-                }
-            })();
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // FIXME: refactor to use the engineController
-    app.get("/api/analysis/stats", async (req, res) => {
-        if (!analyzer) return res.status(503).json({error: "Analysis not configured"});
-
-        try {
-            const stats = await analyzer.getStats();
-            res.json(stats);
-        } catch (err) {
-            console.error("[Analysis] getStats failed:", err);
-            res.status(500).json({error: err.message});
-        }
-    });
-
-    // Chess.com
     app.post("/api/chesscom/fetch", chessComController.fetchUserGames);
 
-    // Cutechess
     app.post("/api/cutechess/gauntlet", tournamentController.runGauntlet);
     app.post("/api/cutechess/selfplay", tournamentController.runSelfPlay);
 
-    // PGN Ingestion
     app.post("/api/pgn/ingest", pgnController.ingestString);
     app.post("/api/pgn/ingest-file", pgnController.ingestFile);
 
-    // Tasks Status
     app.get("/api/tasks", tasksController.getAllTasks);
     app.get("/api/tasks/:id", tasksController.getTask);
 
@@ -516,7 +261,7 @@ if (import.meta.main) {
     const LICHESS_MAX_GAMES = parseInt(process.env.LICHESS_MAX_GAMES ?? "4", 10);
     const ENGINE_HARD_CAP = parseInt(process.env.ENGINE_HARD_CAP ?? String(LICHESS_MAX_GAMES + 3), 10);
 
-    const manager = new EngineManager({
+    const engineManager = new EngineManager({
         maxEngines: ENGINE_HARD_CAP,
         notifier,
         engineOptions: {
@@ -524,13 +269,13 @@ if (import.meta.main) {
         },
     });
 
-    await manager.registerEngine("Main", JEWKIEBOT_PATH);
+    await engineManager.registerEngine("Main", JEWKIEBOT_PATH);
 
     const lichessEngineFactory = () => {
         // The reservation check is what enforces the cap. Existing engines are untouched.
         const label = `game-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        if (!manager.hasCapacity()) {
-            throw new EngineCapReached(manager.maxEngines, manager.count());
+        if (!engineManager.hasCapacity()) {
+            throw new EngineCapReached(engineManager.maxEngines, engineManager.count());
         }
         return new UciEngine({
             cmd: JEWKIEBOT_PATH,
@@ -588,7 +333,7 @@ if (import.meta.main) {
     if (!stockfishExists) console.warn("[Server] Stockfish not found — analysis endpoints disabled.");
 
     const {app} = createApp({
-        manager,
+        engineManager,
         lichessEngineFactory,
         mainEnginePath: JEWKIEBOT_PATH,
         maxConcurrentGames: LICHESS_MAX_GAMES,
@@ -648,7 +393,7 @@ if (import.meta.main) {
         } catch (_) {
         }
         try {
-            await manager.shutdownAll();
+            await engineManager.shutdownAll();
         } catch (e) {
             console.error("[Server] shutdownAll error:", e);
         }

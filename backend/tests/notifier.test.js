@@ -1,5 +1,5 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES, WebhookTransport} from "../src/notifier.js";
+import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES, WebhookTransport} from "../src/notifier.ts";
 import {ApiTransport} from "../src/apiTransport.js";
 
 describe("WebhookTransport", () => {

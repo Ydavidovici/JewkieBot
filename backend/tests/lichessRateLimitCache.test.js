@@ -1,6 +1,6 @@
 import { mock, describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { LichessBot, LichessRateLimited } from "../src/lichessBot.js";
-import { nullNotifier } from "../src/notifier.js";
+import { nullNotifier } from "../src/notifier.ts";
 
 describe("LichessBot - Caching and Throttling", () => {
     let originalFetch;
