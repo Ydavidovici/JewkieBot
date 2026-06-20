@@ -22,7 +22,8 @@
         "generate-data": "bun run src/scripts/generate_dataset.ts"
     },
     "devDependencies": {
-        "@types/bun": "latest"
+        "@types/bun": "latest",
+        "typescript": "^6.0.0-dev.20260416"
     },
     "dependencies": {
         "chess.js": "^1.4.0",
