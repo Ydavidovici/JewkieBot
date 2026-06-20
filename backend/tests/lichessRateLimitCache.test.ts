@@ -29,7 +29,7 @@ describe("LichessBot - Caching and Throttling", () => {
     });
 
     it("should cache profile fetches for 60 seconds", async () => {
-        global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ perfs: { blitz: { rating: 1500 } } }), { status: 200 }));
+        (global.fetch as any).mockResolvedValueOnce(new Response(JSON.stringify({ perfs: { blitz: { rating: 1500 } } }), { status: 200 }));
         
         const r1 = await bot._fetchMyRating("blitz");
         expect(r1.rating).toBe(1500);
@@ -48,7 +48,7 @@ describe("LichessBot - Caching and Throttling", () => {
 
         // Advance another 31 seconds, cache expires
         advanceTime(31000);
-        global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ perfs: { blitz: { rating: 1550 } } }), { status: 200 }));
+        (global.fetch as any).mockResolvedValueOnce(new Response(JSON.stringify({ perfs: { blitz: { rating: 1550 } } }), { status: 200 }));
         
         const r4 = await bot._fetchMyRating("blitz");
         expect(r4.rating).toBe(1550);
@@ -57,7 +57,7 @@ describe("LichessBot - Caching and Throttling", () => {
 
     it("should cache online bots for 30 seconds", async () => {
         const botsPayload = "{\"id\":\"bot1\",\"username\":\"Bot1\"}\n{\"id\":\"bot2\",\"username\":\"Bot2\"}\n";
-        global.fetch.mockResolvedValueOnce(new Response(botsPayload, { status: 200 }));
+        (global.fetch as any).mockResolvedValueOnce(new Response(botsPayload, { status: 200 }));
         
         const b1 = await bot._fetchOnlineBots(500);
         expect(b1.length).toBe(2);
@@ -75,7 +75,7 @@ describe("LichessBot - Caching and Throttling", () => {
 
         // Advance 16 seconds, cache expires
         advanceTime(16000);
-        global.fetch.mockResolvedValueOnce(new Response("{\"id\":\"bot3\",\"username\":\"Bot3\"}\n", { status: 200 }));
+        (global.fetch as any).mockResolvedValueOnce(new Response("{\"id\":\"bot3\",\"username\":\"Bot3\"}\n", { status: 200 }));
         
         const b3 = await bot._fetchOnlineBots(500);
         expect(b3.length).toBe(1);
@@ -84,7 +84,7 @@ describe("LichessBot - Caching and Throttling", () => {
 
     it("should throttle global challenges", async () => {
         // Mock fetch to just return 200 OK so _lichessFetch succeeds
-        global.fetch.mockResolvedValue(new Response("{}", { status: 200 }));
+        (global.fetch as any).mockResolvedValue(new Response("{}", { status: 200 }));
         
         // No wait on first call
         await bot._throttleGlobalChallenge();
@@ -108,7 +108,7 @@ describe("LichessBot - Caching and Throttling", () => {
 
     it("should globally throttle all API requests to 1000ms", async () => {
         bot.apiSpacingMs = 1000;
-        global.fetch.mockResolvedValue(new Response("{}", { status: 200 }));
+        (global.fetch as any).mockResolvedValue(new Response("{}", { status: 200 }));
         
         // First API call - should have no delay
         await bot._lichessFetch("https://lichess.org/api/test");

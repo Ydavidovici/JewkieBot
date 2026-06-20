@@ -44,7 +44,7 @@ class MockEngine extends EventEmitter {
         this.uciNewGame = mock(async () => {});
         this.position = mock(async () => {});
         this.setOption = mock(async () => {});
-        this.go = mock(async () => "e2e4");
+        this.go = mock(async () => ({ bestMove: "e2e4", scoreCp: 0, isMate: false }));
         this.stop = mock(async () => {});
     }
 }
@@ -121,7 +121,7 @@ afterEach(() => {
 describe("Promotion normalization", () => {
     it("sends a lowercase promotion piece to Lichess when engine returns uppercase", async () => {
         const gameId = "promo_test";
-        engine.go = mock(async () => "e7e8Q");
+        engine.go = mock(async () => ({ bestMove: "e7e8Q", scoreCp: 0, isMate: false }));
 
         global.fetch = mock(async (url) => {
             if (url.includes("/account")) return { ok: true, json: async () => ({ id: "bot" }) };
@@ -143,7 +143,7 @@ describe("Promotion normalization", () => {
 
     it("does not modify normal 4-character moves", async () => {
         const gameId = "normal_move";
-        engine.go = mock(async () => "d2d4");
+        engine.go = mock(async () => ({ bestMove: "d2d4", scoreCp: 0, isMate: false }));
 
         global.fetch = mock(async (url) => {
             if (url.includes("/account")) return { ok: true, json: async () => ({ id: "bot" }) };
@@ -597,7 +597,7 @@ describe("playGame() — gameFull event", () => {
         const callOrder = [];
         engine.uciNewGame = mock(async () => { callOrder.push("uciNewGame"); });
         engine.position = mock(async () => { callOrder.push("position"); });
-        engine.go = mock(async () => "e2e4");
+        engine.go = mock(async () => ({ bestMove: "e2e4", scoreCp: 0, isMate: false }));
 
         global.fetch = mock(async (url) => {
             if (url.includes("/account")) return { ok: true, json: async () => ({ id: "bot" }) };
@@ -644,7 +644,7 @@ describe("playGame() — gameFull event", () => {
 describe("playGame() — gameState event", () => {
     it("makes a move when a gameState event signals it's the bot's turn", async () => {
         const gameId = "state_test";
-        engine.go = mock(async () => "g1f3");
+        engine.go = mock(async () => ({ bestMove: "g1f3", scoreCp: 0, isMate: false }));
 
         const gameState = {
             type: "gameState",
@@ -724,7 +724,7 @@ describe("Game over", () => {
 
 describe("Resignation", () => {
     async function expectResign(gameId, engineMove) {
-        engine.go = mock(async () => engineMove);
+        engine.go = mock(async () => ({ bestMove: engineMove, scoreCp: 0, isMate: false }));
 
         global.fetch = mock(async (url) => {
             if (url.includes("/account")) return { ok: true, json: async () => ({ id: "bot" }) };

@@ -45,7 +45,7 @@ export class EngineController {
 
             const mainEngine = this.engineManager.getEngine("Main");
             await mainEngine.position(fen);
-            const bestMove = await mainEngine.go({depth});
+            const {bestMove} = await mainEngine.go({depth, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0});
 
             res.json({bestMove, depth});
         } catch (err) {
@@ -117,7 +117,10 @@ export class EngineController {
             const mainEngine = this.engineManager.getEngine("Main");
 
             await mainEngine.position(fen || "startpos", moves || []);
-            const bestMove = await mainEngine.go(options || {depth: 7});
+            const {bestMove} = await mainEngine.go({
+                depth: 7, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0,
+                ...(options || {}),
+            });
 
             res.json({bestMove});
         } catch (err) {
@@ -132,12 +135,19 @@ export class EngineController {
 
     bench = async (req: any, res: any): Promise<any> => {
         try {
-            const {mode = "depth", depth = 10, timeLimit = 30000, evalTime = 2000} = req.body ?? {};
+            const {mode = "depth", depth = 10, timeLimit = 30000} = req.body ?? {};
             console.log(`Starting benchmark [Mode: ${mode}, Depth: ${depth}, Time: ${timeLimit}ms]...`);
 
             const benchId = `bench-${Date.now()}`;
             const benchEngine = await this.engineManager.registerEngine(benchId, this.mainEnginePath);
-            const results = await benchEngine.bench({mode, depth, timeLimit, evalTime});
+            // Translate the HTTP bench request into the unified go contract:
+            // time mode caps by movetime, depth mode caps by depth (0 = unconstrained).
+            const results = await benchEngine.bench({
+                depth: mode === "time" ? 0 : depth,
+                nodes: 0,
+                moveTime: mode === "time" ? timeLimit : 0,
+                whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0,
+            });
             await this.engineManager.shutdownEngine(benchId);
 
             console.log("Benchmark results:", results);

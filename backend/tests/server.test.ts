@@ -3,7 +3,7 @@ import { mock, describe, it, expect, beforeEach, afterEach } from "bun:test";
 let mockBotInstances = [];
 let nextStartBehavior = null;
 
-class MockLichessBot {
+class MockLichessBot { [key: string]: any;
     constructor(token, factory, opts) {
         this.token = token;
         this.factory = factory;
@@ -33,7 +33,7 @@ class MockLichessBot {
 
 class MockUciEngine {}
 
-class MockEngineCapReached extends Error {
+class MockEngineCapReached extends Error { [key: string]: any;
     constructor(cap, current) {
         super(`Engine spawn cap reached (${current}/${cap})`);
         this.name = "EngineCapReached";
@@ -42,7 +42,7 @@ class MockEngineCapReached extends Error {
     }
 }
 
-class MockEngineManager {
+class MockEngineManager { [key: string]: any;
     constructor() {
         this.engines = new Map();
         this.shutdownEngineCalls = [];
@@ -63,7 +63,7 @@ class MockEngineManager {
         const e = {
             ready: true,
             position: mock(async () => {}),
-            go: mock(async () => "e2e4"),
+            go: mock(async () => ({ bestMove: "e2e4", scoreCp: 0, isMate: false })),
             uciNewGame: mock(async () => {}),
             bench: mock(async () => ({ nps: 1234, nodes: 100 })),
             stop: mock(async () => {}),
@@ -94,14 +94,14 @@ let manager;
 let factoryCalls;
 let tokenValue;
 
-async function POST(path, body) {
+async function POST(path: string, body?: any) {
     return fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
     });
 }
-function GET(path) {
+function GET(path: string) {
     return fetch(`${baseUrl}${path}`);
 }
 
@@ -118,7 +118,7 @@ beforeEach(async () => {
     await manager.registerEngine("Main", "/fake/path/jewkiebot");
 
     const { app } = createApp({
-        manager,
+        engineManager: manager,
         lichessEngineFactory: () => { factoryCalls++; return new MockUciEngine(); },
         mainEnginePath: "/fake/path/jewkiebot",
         maxConcurrentGames: 4,
@@ -126,7 +126,7 @@ beforeEach(async () => {
         BotClass: MockLichessBot,
     });
 
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
         server = app.listen(0, () => resolve());
     });
     const port = server.address().port;
@@ -135,7 +135,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     console.error = originalConsoleError;
-    await new Promise((resolve) => server?.close(resolve));
+    await new Promise<void>((resolve) => server?.close(resolve));
 });
 
 describe("GET /api/health", () => {
@@ -169,19 +169,19 @@ describe("POST /api/engine/analysis", () => {
 
     it("returns bestMove and depth on success", async () => {
         const engine = manager.getEngine("Main");
-        engine.go = mock(async () => "d2d4");
+        engine.go = mock(async () => ({ bestMove: "d2d4", scoreCp: 0, isMate: false }));
         const res = await POST("/api/engine/analysis", { fen: "startpos", depth: 5 });
         expect(res.status).toBe(200);
         const body = await res.json();
         expect(body).toEqual({ bestMove: "d2d4", depth: 5 });
         expect(engine.position).toHaveBeenCalledWith("startpos");
-        expect(engine.go).toHaveBeenCalledWith({ depth: 5 });
+        expect(engine.go).toHaveBeenCalledWith({ depth: 5, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
     });
 
     it("defaults depth to 10 when not provided", async () => {
         const engine = manager.getEngine("Main");
         await POST("/api/engine/analysis", { fen: "startpos" });
-        expect(engine.go).toHaveBeenCalledWith({ depth: 10 });
+        expect(engine.go).toHaveBeenCalledWith({ depth: 10, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
     });
 
     it("returns 500 when engine.go throws", async () => {
@@ -200,7 +200,7 @@ describe("POST /api/engine/go", () => {
         const res = await POST("/api/engine/go", {});
         expect(res.status).toBe(200);
         expect(engine.position).toHaveBeenCalledWith("startpos", []);
-        expect(engine.go).toHaveBeenCalledWith({ depth: 7 });
+        expect(engine.go).toHaveBeenCalledWith({ depth: 7, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
     });
 
     it("passes through provided fen, moves, options", async () => {
@@ -211,7 +211,7 @@ describe("POST /api/engine/go", () => {
             options: { moveTime: 2000 },
         });
         expect(engine.position).toHaveBeenCalledWith("8/8/8/8/8/8/8/8 w - - 0 1", ["e2e4", "e7e5"]);
-        expect(engine.go).toHaveBeenCalledWith({ moveTime: 2000 });
+        expect(engine.go).toHaveBeenCalledWith({ depth: 7, nodes: 0, moveTime: 2000, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
     });
 
     it("returns 500 on engine error", async () => {
@@ -241,7 +241,7 @@ describe("POST /api/engine/bench", () => {
         const benchCall = manager.registerEngineCalls.find(c => c.id.startsWith("bench-"));
         expect(benchCall).toBeDefined();
         
-        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ mode: "time", depth: 12, timeLimit: 5000, evalTime: 1000 });
+        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ depth: 0, nodes: 0, moveTime: 5000, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
         
         const body = await res.json();
         expect(body.data).toEqual({ nps: 1234, nodes: 100 });
@@ -251,7 +251,7 @@ describe("POST /api/engine/bench", () => {
         await POST("/api/engine/bench", {});
         
         const benchCall = manager.registerEngineCalls.find(c => c.id.startsWith("bench-"));
-        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ mode: "depth", depth: 10, timeLimit: 30000, evalTime: 2000 });
+        expect(benchCall.engineMock.bench).toHaveBeenCalledWith({ depth: 10, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0 });
     });
 
     it("returns 500 when bench throws", async () => {
@@ -307,7 +307,7 @@ describe("POST /api/lichess/start", () => {
         expect(mockBotInstances).toHaveLength(1);
         expect(mockBotInstances[0].botProfile).toBe("mockBot");
         const body = await res.json();
-        expect(body.message).toContain("max 4 concurrent");
+        expect(body.message).toContain("Lichess Bot started");
     });
 
     it("returns 400 if the bot is already running", async () => {

@@ -102,8 +102,8 @@ export class GameAnalyzer {
         }
 
         const evalOpts = this.moveTimeMs !== null
-            ? {moveTime: this.moveTimeMs}
-            : {depth: this.depth};
+            ? {depth: 0, nodes: 0, moveTime: this.moveTimeMs, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0}
+            : {depth: this.depth, nodes: 0, moveTime: 0, whiteTime: 0, blackTime: 0, whiteIncrement: 0, blackIncrement: 0};
 
         // We evaluate N+1 positions for N plies.
         // posEvals[k] = Stockfish's evaluation of the position AFTER ply k
@@ -121,13 +121,13 @@ export class GameAnalyzer {
 
         if (student) {
             const [tEval, sEval] = await Promise.all([
-                engine.goWithEval(evalOpts),
-                student.goWithEval(evalOpts)
+                engine.go(evalOpts),
+                student.go(evalOpts)
             ]);
             posEvals.push(tEval);
             studentEvals.push(sEval);
         } else {
-            posEvals.push(await engine.goWithEval(evalOpts));
+            posEvals.push(await engine.go(evalOpts));
         }
 
         for (const move of moves) {
@@ -140,13 +140,13 @@ export class GameAnalyzer {
 
             if (student) {
                 const [tEval, sEval] = await Promise.all([
-                    engine.goWithEval(evalOpts),
-                    student.goWithEval(evalOpts)
+                    engine.go(evalOpts),
+                    student.go(evalOpts)
                 ]);
                 posEvals.push(tEval);
                 studentEvals.push(sEval);
             } else {
-                posEvals.push(await engine.goWithEval(evalOpts));
+                posEvals.push(await engine.go(evalOpts));
             }
         }
 

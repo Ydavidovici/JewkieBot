@@ -60,7 +60,7 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.post("/api/engine/bench", engineController.bench);
     app.get("/api/engine/stream", engineController.stream);
     app.post("/api/engine/cancel", engineController.cancel);
-    app.post("/api/engine/analyze", engineController.analyze);
+    app.post("/api/engine/analysis", engineController.analyze);
     app.post("/api/analysis/run", engineController.runAnalysis);
     app.post("/api/analysis/stop", engineController.stopAnalysis);
     app.get("/api/analysis/status", engineController.getAnalysisStatus);
@@ -240,7 +240,7 @@ if (import.meta.main) {
     let discordBot = null;
     if (process.env.DISCORD_BOT_TOKEN && process.env.DISCORD_CHANNEL_ID) {
         try {
-            const {createDiscordBot} = await import("./discordBot.js");
+            const {createDiscordBot} = await import("./discordBot.ts");
             discordBot = await createDiscordBot({
                 token: process.env.DISCORD_BOT_TOKEN,
                 channelId: process.env.DISCORD_CHANNEL_ID,

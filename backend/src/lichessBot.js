@@ -656,12 +656,15 @@ export class LichessBot {
         let rawMove;
 
         try {
-            rawMove = await engine.go({
+            ({bestMove: rawMove} = await engine.go({
+                depth: 0,
+                nodes: 0,
+                moveTime: 0,
                 whiteTime: timeInfo.wtime,
                 blackTime: timeInfo.btime,
-                whiteInc: timeInfo.winc,
-                blackInc: timeInfo.binc,
-            });
+                whiteIncrement: timeInfo.winc,
+                blackIncrement: timeInfo.binc,
+            }));
         } catch (err) {
             this.notifier.warn(`[${gameId}] go command failed: ${err.message}`);
             return false;

@@ -1,5 +1,5 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {HealthPinger, DiscordTransport} from "../src/discordBot.js";
+import {HealthPinger, DiscordTransport} from "../src/discordBot.ts";
 
 describe("HealthPinger", () => {
     let sendFnMock;
@@ -83,8 +83,11 @@ describe("DiscordTransport", () => {
         await new Promise(r => setTimeout(r, 60)); // wait for flush
 
         expect(sendFnMock).toHaveBeenCalledTimes(1);
+        // Both buffered events are flushed together as embeds in a single send.
         const payload = sendFnMock.mock.calls[0][1];
-        expect(payload).toContain("event 1");
-        expect(payload).toContain("event 2");
+        expect(payload.embeds).toHaveLength(2);
+        const descriptions = payload.embeds.map(e => e.data.description).join("\n");
+        expect(descriptions).toContain("event 1");
+        expect(descriptions).toContain("event 2");
     });
 });

@@ -13,8 +13,8 @@ console.time("Move Calculation Time");
 const move = await engine.go({
     whiteTime: 600000,
     blackTime: 600000,
-    whiteInc: 0,
-    blackInc: 0,
+    whiteIncrement: 0,
+    blackIncrement: 0,
 });
 
 console.timeEnd("Move Calculation Time");

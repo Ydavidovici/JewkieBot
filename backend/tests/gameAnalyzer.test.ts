@@ -82,7 +82,7 @@ describe("GameAnalyzer", () => {
             start: async () => {},
             uciNewGame: async () => {},
             position: async () => {},
-            goWithEval: async () => ({ bestMove: "e2e4", scoreCp: 50, isMate: false })
+            go: async () => ({ bestMove: "e2e4", scoreCp: 50, isMate: false })
         });
         analyzer._manager.shutdownEngine = async () => {};
 

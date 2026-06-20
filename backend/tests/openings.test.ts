@@ -44,8 +44,7 @@ describe("Opening Book Features", () => {
                 position: mock(async () => {}),
                 setOption: mock(async () => {}),
                 start: mock(async () => {}),
-                go: mock(async () => "a1a2"),
-                goWithEval: mock(async () => ({ bestMove: "a1a2" }))
+                go: mock(async () => ({ bestMove: "a1a2", scoreCp: 0, isMate: false }))
             };
             bot = new LichessBot("fake_token", () => fakeEngine, { maxConcurrentGames: 1 });
             bot.sendMove = mock(async () => true);
@@ -113,8 +112,7 @@ describe("Opening Book Features", () => {
                 position: mock(async () => {}),
                 setOption: mock(async () => {}),
                 start: mock(async () => {}),
-                go: mock(async () => "a1a2"),
-                goWithEval: mock(async () => ({ bestMove: "a1a2" }))
+                go: mock(async () => ({ bestMove: "a1a2", scoreCp: 0, isMate: false }))
             };
             bot = new LichessBot("fake_token", () => fakeEngine, { maxConcurrentGames: 1 });
             bot.sendMove = mock(async () => true);

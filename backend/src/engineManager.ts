@@ -110,33 +110,48 @@ export class UciEngine extends EventEmitter {
         }
     }
 
+    // Build the shared search-parameter string used by both `go` and `bench`.
+    // Every field is always emitted; a value of 0 means "unconstrained".
+    _searchParams(options: EngineGoOptions) {
+        return [
+            `depth ${options.depth}`,
+            `nodes ${options.nodes}`,
+            `movetime ${options.moveTime}`,
+            `wtime ${options.whiteTime}`,
+            `btime ${options.blackTime}`,
+            `winc ${options.whiteIncrement}`,
+            `binc ${options.blackIncrement}`,
+        ].join(" ");
+    }
+
     // go tells the engine to start calculating
     async go(options: EngineGoOptions) {
         await this.ensureReady();
 
-        const parts = ["go"];
-
-        parts.push(`depth ${options.depth}`);
-        parts.push(`nodes ${options.nodes}`);
-
-        if (options.moveTime) {
-            parts.push(`movetime ${options.moveTime}`);
-        } else {
-            parts.push(`wtime ${options.whiteTime}`);
-            parts.push(`btime ${options.blackTime}`);
-            parts.push(`winc ${options.whiteIncrement}`);
-            parts.push(`binc ${options.blackIncrement}`);
-        }
-
-        let safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
+        const safeTimeout = options.moveTime ? options.moveTime + this.commandTimeoutBufferMs : (options.whiteTime ? 60000 * 5 : 60000);
         let currentBestMove = "(none)";
+        let scoreCp: number | null = null;
+        let isMate = false;
 
         try {
             const response: any = await this._sendCommand({
-                command: parts.join(" "),
+                command: `go ${this._searchParams(options)}`,
                 stopCondition: (line) => line.startsWith("bestmove"),
                 callback: (line) => {
-                    if (line.startsWith("info") && line.includes(" pv ")) {
+                    if (!line.startsWith("info")) {
+                        return;
+                    }
+                    const cpMatch = line.match(/score cp (-?\d+)/);
+                    if (cpMatch) {
+                        scoreCp = parseInt(cpMatch[1], 10);
+                        isMate = false;
+                    }
+                    const mateMatch = line.match(/score mate (-?\d+)/);
+                    if (mateMatch) {
+                        scoreCp = parseInt(mateMatch[1], 10) > 0 ? 10000 : -10000;
+                        isMate = true;
+                    }
+                    if (line.includes(" pv ")) {
                         const moves = line.split(" pv ")[1]?.split(" ");
                         if (moves && moves[0]) {
                             currentBestMove = moves[0];
@@ -146,10 +161,10 @@ export class UciEngine extends EventEmitter {
                 timeoutMs: safeTimeout,
             });
 
-            return response.split(" ")[1];
+            return {bestMove: response.split(" ")[1], scoreCp, isMate};
         } catch (e) {
             console.error("[Engine] Error during 'go':", e);
-            return currentBestMove !== "(none)" ? currentBestMove : "0000";
+            return {bestMove: currentBestMove !== "(none)" ? currentBestMove : "0000", scoreCp, isMate};
         }
     }
 
@@ -205,7 +220,6 @@ export class UciEngine extends EventEmitter {
         } else {
             this.notifier.error(`[EngineManager] Engine ${this.label} exceeded max restarts`, {max: this.maxRestarts});
             this.emit("fatal_error", new Error("Max restarts exceeded"));
-            process.exit(1);
         }
     }
 
@@ -328,20 +342,15 @@ export class UciEngine extends EventEmitter {
     }
 
 
-    async bench(options: Partial<EngineGoOptions> = {}) {
+    // bench is a configured `go`: same contract, emitted as a `bench` command.
+    async bench(options: EngineGoOptions) {
         await this.ensureReady();
-
-        const parts = ["bench"];
-
-        parts.push(`depth ${options.depth ?? 0}`);
-        parts.push(`eval ${options.evalTime ?? 0}`);
-        parts.push(`movetime ${options.moveTime ?? 0}`);
 
         const results = {nps: 0, eps: 0, nodes: 0, time: 0, ordering: 0, qSearch: 0, ttHit: 0, fullOutput: []};
         const predictedTimeout = options.moveTime ? (options.moveTime * 2) : 60000;
 
         await this._sendCommand({
-            command: parts.join(" "),
+            command: `bench ${this._searchParams(options)}`,
             stopCondition: (line) => line.includes("Benchmark Complete"),
             callback: (line) => {
                 results.fullOutput.push(line);
