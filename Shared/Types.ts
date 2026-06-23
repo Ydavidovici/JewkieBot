@@ -23,16 +23,16 @@ export interface EngineManagerOptions {
     notifier?: any;
 }
 
+// The single search contract shared by go() and bench(). Every field is
+// always sent to the engine; a value of 0 means "unconstrained".
 export interface EngineGoOptions {
     depth: number;
     nodes: number;
-    evalTime: number;
+    moveTime: number;
     whiteTime: number;
     blackTime: number;
     whiteIncrement: number;
     blackIncrement: number;
-    moveTime?: number;
-    commandTimeoutBufferMs?: number;
 }
 
 export interface EngineCommandOptions {
