@@ -396,7 +396,7 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
                             await interaction.editReply(data.message || data.status || "Stopped.");
                         } else if (sub === "status") {
                             const data = await api.get("/lichess/status");
-                            await interaction.editReply(`**Lichess Bot Status**\nRunning: ${data.running ? ":white_check_mark: Yes" : ":x: No"}\nActive Games: ${data.activeGames?.length || 0}\nRate Limited: ${data.rateLimitedFor > 0 ? `Yes (${data.rateLimitedFor}s)` : "No"}`);
+                            await interaction.editReply(`**Lichess Bot Status**\nRunning: ${data.running ? ":white_check_mark: Yes" : ":x: No"}\nActive Games: ${data.activeGames?.length || 0}\nRate Limited: ${data.rateLimitedFor > 0 ? `Yes (${data.rateLimitedFor}s)` : "No"}\nMax Bot Games: ${data.maxBotGamesFor > 0 ? `Reached (${data.maxBotGamesFor}s)` : "No"}`);
                         }
                     } else if (group === "autoplay") {
                         if (sub === "start") {
@@ -495,7 +495,7 @@ export async function createDiscordBot({token, channelId, notifier, healthUrl, a
                             depth: interaction.options.getInteger("depth") ?? undefined,
                             nodes: interaction.options.getInteger("nodes") ?? undefined,
                         });
-                        const data = await api.post("/cutechess/selfplay", payload);
+                        const data = await api.post("/selfplay/run", payload);
                         await interaction.editReply(`Self-play started. Task: \`${data.taskId ?? "?"}\``);
                     }
                 } catch (err: any) {

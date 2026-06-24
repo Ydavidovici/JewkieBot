@@ -1,4 +1,4 @@
-import {GameAnalyzer} from "../gameAnalyzer.js";
+import {GameAnalyzer} from "../gameAnalyzer.ts";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import * as dotenv from "dotenv";

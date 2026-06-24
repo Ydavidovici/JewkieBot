@@ -5,27 +5,31 @@ import path from "node:path";
 import {EngineManager, EngineCapReached} from "./engineManager.ts";
 import {LichessBot} from "./lichessBot.ts";
 import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport, ConsoleTransport} from "./notifier";
-import {GameAnalyzer} from "./gameAnalyzer.js";
+import {GameAnalyzer} from "./gameAnalyzer.ts";
 import {taskManager} from "./taskManager";
 import {PgnManager} from "./pgnManager.js";
 import {dbClient} from "./dbClient.js";
 import {ChessComController} from "./controllers/chessComController.js";
 import {TournamentController} from "./controllers/tournamentController.js";
+import {SelfPlayController} from "./controllers/selfPlayController.ts";
 import {PgnController} from "./controllers/pgnController.js";
 import {TasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
+import {GameAnalyzerController} from "./controllers/gameAnalyzerController.ts";
 import {LichessController} from "./controllers/lichessController.ts";
 
 export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 5, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
     const app = express();
 
     const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
+    const gameAnalyzerController = new GameAnalyzerController(analyzer, taskManager);
     const lichessController = new LichessController(getToken, lichessEngineFactory, maxConcurrentGames, notifier, BotClass);
     const pgnManager = new PgnManager(dbClient);
     const tasksController = new TasksController(taskManager);
     const pgnController = new PgnController(taskManager, pgnManager);
     const chessComController = new ChessComController(pgnManager);
     const tournamentController = new TournamentController(taskManager, pgnManager);
+    const selfPlayController = new SelfPlayController(taskManager, pgnManager, analyzer);
 
     app.use(cors({
         origin: "*",
@@ -77,10 +81,10 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.get("/api/engine/stream", engineController.stream);
     app.post("/api/engine/cancel", engineController.cancel);
     app.post("/api/engine/analysis", engineController.analyze);
-    app.post("/api/analysis/run", engineController.runAnalysis);
-    app.post("/api/analysis/stop", engineController.stopAnalysis);
-    app.get("/api/analysis/status", engineController.getAnalysisStatus);
-    app.get("/api/analysis/stats", engineController.getAnalysisStats);
+    app.post("/api/analysis/run", gameAnalyzerController.run);
+    app.post("/api/analysis/stop", gameAnalyzerController.stop);
+    app.get("/api/analysis/status", gameAnalyzerController.status);
+    app.get("/api/analysis/stats", gameAnalyzerController.stats);
 
     app.post("/api/lichess/start", lichessController.start);
     app.post("/api/lichess/stop", lichessController.stop);
@@ -95,7 +99,10 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.post("/api/chesscom/fetch", chessComController.fetchUserGames);
 
     app.post("/api/cutechess/gauntlet", tournamentController.runGauntlet);
-    app.post("/api/cutechess/selfplay", tournamentController.runSelfPlay);
+
+    app.get("/api/selfplay/versions", selfPlayController.versions);
+    app.post("/api/selfplay/run", selfPlayController.run);
+    app.get("/api/selfplay/stream/:taskId", selfPlayController.stream);
 
     app.post("/api/pgn/ingest", pgnController.ingestString);
     app.post("/api/pgn/ingest-file", pgnController.ingestFile);
@@ -242,8 +249,10 @@ if (import.meta.main) {
         }
     }
 
+    // studentPath = jewkiebot, so analysis records both Stockfish's verdict
+    // (teacher) and jewkiebot's own eval/best-move (student) for every position.
     const analyzer = stockfishExists
-        ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20})
+        ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20, studentPath: JEWKIEBOT_PATH})
         : null;
 
     if (!stockfishExists) console.warn("[Server] Stockfish not found — analysis endpoints disabled.");

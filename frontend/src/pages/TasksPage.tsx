@@ -175,11 +175,11 @@ export default function TasksPage() {
                                 onClick={async () => {
                                     setLoading(true);
                                     if (tourneyOpponent === "self") {
-                                        await fetch("/api/cutechess/selfplay", {
+                                        await fetch("/api/selfplay/run", {
                                             method: "POST",
                                             headers: {"Content-Type": "application/json"},
                                             body: JSON.stringify({
-                                                v1: null, v2: null, tc: "10+0.1", games: tourneyGames,
+                                                v1: "current", v2: "current", tc: "10+0.1", games: tourneyGames,
                                             }),
                                         });
                                     } else {

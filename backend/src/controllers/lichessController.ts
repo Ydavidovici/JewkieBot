@@ -60,6 +60,7 @@ export class LichessController {
 
     getStatus = async (req: any, res: any): Promise<any> => {
         const rateLimitedFor = this.lichessBotInstance ? this.lichessBotInstance._rateLimitRemainingSec() : 0;
+        const maxBotGamesFor = this.lichessBotInstance ? this.lichessBotInstance._maxBotGamesRemainingSec() : 0;
 
         if (this.lichessBotInstance && !this.lichessBotInstance.botProfile) {
             this.lichessBotInstance._ensureProfile().catch(() => {
@@ -72,6 +73,7 @@ export class LichessController {
             activeGames: this.lichessBotInstance ? Array.from(this.lichessBotInstance.activeGames) : [],
             maxConcurrentGames: this.lichessBotInstance ? this.lichessBotInstance.maxConcurrentGames : this.maxConcurrentGames,
             rateLimitedFor,
+            maxBotGamesFor,
             declinedCount: this.lichessBotInstance ? this.lichessBotInstance.recentlyDeclined.size : 0,
         });
     };

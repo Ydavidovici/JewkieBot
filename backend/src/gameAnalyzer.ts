@@ -1,7 +1,9 @@
 import {dbClient as defaultDbClient} from "./dbClient.js";
 import {EngineManager} from "./engineManager.ts";
 
-export function classifyMove(cpLoss) {
+export type MoveClassification = "good" | "inaccuracy" | "mistake" | "blunder";
+
+export function classifyMove(cpLoss: number | null | undefined): MoveClassification | null {
     if (cpLoss === null || cpLoss === undefined) return null;
     if (cpLoss <= 10) return "good";
     if (cpLoss <= 50) return "inaccuracy";
@@ -9,8 +11,59 @@ export function classifyMove(cpLoss) {
     return "blunder";
 }
 
+export interface AnalyzerProgress {
+    total: number;
+    done: number;
+    currentGameId: number | string | null;
+}
+
+export interface GameAnalyzerOptions {
+    studentPath?: string | null;
+    depth?: number;
+    moveTimeMs?: number | null;
+    spawnFn?: any;
+    dbClient?: any;
+    concurrency?: number;
+}
+
+interface EngineEval {
+    scoreCp: number | null;
+    bestMove?: string | null;
+    isMate?: boolean;
+}
+
+interface MoveEvalRow {
+    gameId: number | string;
+    ply: number;
+    bestUci: string | null;
+    bestCp: number | null;
+    playedCp: number | null;
+    cpLoss: number | null;
+    isMate: 0 | 1;
+    classification: MoveClassification | null;
+    studentCp: number | null;
+    studentUci: string | null;
+}
+
+interface EnginePair {
+    teacher: any;
+    student: any | null;
+}
+
 export class GameAnalyzer {
-    constructor(stockfishPath, options = {}) {
+    stockfishPath: string;
+    studentPath: string | null;
+    depth: number;
+    moveTimeMs: number | null;
+    spawnFn: any;
+    _dbClient: any;
+    concurrency: number;
+    _manager: EngineManager;
+    _running: boolean;
+    _aborted: boolean;
+    progress: AnalyzerProgress;
+
+    constructor(stockfishPath: string, options: GameAnalyzerOptions = {}) {
         this.stockfishPath = stockfishPath;
         this.studentPath = options.studentPath ?? null;
         this.depth = options.depth ?? 20;
@@ -24,17 +77,17 @@ export class GameAnalyzer {
         this.progress = {total: 0, done: 0, currentGameId: null};
     }
 
-    get isRunning() {
+    get isRunning(): boolean {
         return this._running;
     }
 
-    async stop() {
+    async stop(): Promise<void> {
         this._aborted = true;
         await this._manager.shutdownAll();
         this._running = false;
     }
 
-    async analyzeAll(playerName = null) {
+    async analyzeAll(playerName: string | null = null): Promise<void> {
         if (this._running) throw new Error("Analysis already running");
         this._running = true;
         this._aborted = false;
@@ -47,7 +100,7 @@ export class GameAnalyzer {
 
             if (unanalyzed.length === 0) return;
 
-            const engines = [];
+            const engines: EnginePair[] = [];
             for (let i = 0; i < Math.min(this.concurrency, unanalyzed.length); i++) {
                 const eng = this._manager.reserveEngine(`analysis-${i}`, this.stockfishPath);
                 await eng.start();
@@ -56,10 +109,10 @@ export class GameAnalyzer {
                     student = this._manager.reserveEngine(`student-${i}`, this.studentPath);
                     await student.start();
                 }
-                engines.push({ teacher: eng, student });
+                engines.push({teacher: eng, student});
             }
 
-            const processQueue = async (pair) => {
+            const processQueue = async (pair: EnginePair) => {
                 while (unanalyzed.length > 0 && !this._aborted) {
                     const {id} = unanalyzed.shift();
                     this.progress.currentGameId = id;
@@ -75,7 +128,7 @@ export class GameAnalyzer {
         }
     }
 
-    async analyzeGame(gameId, providedEngine = null, providedStudent = null) {
+    async analyzeGame(gameId: number | string, providedEngine: any = null, providedStudent: any = null): Promise<void> {
         // Fallback to reserving a temporary one if none provided, though analyzeAll passes it
         let engine = providedEngine;
         let student = providedStudent;
@@ -109,8 +162,8 @@ export class GameAnalyzer {
         // posEvals[k] = Stockfish's evaluation of the position AFTER ply k
         //               (or the starting position for k=0).
         // scoreCp is always from the side-to-move's perspective.
-        const posEvals = [];
-        const studentEvals = [];
+        const posEvals: EngineEval[] = [];
+        const studentEvals: EngineEval[] = [];
 
         await engine.uciNewGame();
         await engine.position("startpos");
@@ -134,7 +187,7 @@ export class GameAnalyzer {
             if (this._aborted) return;
             const fenAfter = move.fen_after || move.fenAfter;
             if (!fenAfter) break; // chain requires FEN; stop here
-            
+
             await engine.position(fenAfter);
             if (student) await student.position(fenAfter);
 
@@ -151,7 +204,7 @@ export class GameAnalyzer {
         }
 
         // Build eval rows for each ply that has a complete (before, after) pair.
-        const rows = [];
+        const rows: MoveEvalRow[] = [];
         const pairs = posEvals.length - 1;
 
         for (let i = 0; i < pairs && i < moves.length; i++) {
@@ -179,7 +232,7 @@ export class GameAnalyzer {
                 isMate: before.isMate ? 1 : 0,
                 classification: classifyMove(cpLoss),
                 studentCp: studentBefore ? studentBefore.scoreCp : null,
-                studentUci: studentBefore ? studentBefore.bestMove : null
+                studentUci: studentBefore ? studentBefore.bestMove ?? null : null
             });
         }
 
@@ -195,7 +248,7 @@ export class GameAnalyzer {
         }
     }
 
-    async getStats() {
+    async getStats(): Promise<any> {
         return await this._dbClient.getStats();
     }
 }

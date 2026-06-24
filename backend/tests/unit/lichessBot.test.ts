@@ -2918,9 +2918,11 @@ describe("Daily bot-vs-bot games limit (429)", () => {
     // returns HTTP 429 with body:
     //   {"error":"You played N games against other bots today, please wait
     //    before challenging another bot."}
-    // We treat it like any other rate limit: honour whatever Retry-After Lichess
-    // gives, never multiply it; fall back to defaultRetryAfterSec when the body
-    // carries no machine-readable duration (the challenger variant has none).
+    // Unlike a true 429, this caps bot challenges ONLY — human tournament play is
+    // unaffected — so it opens the dedicated bot-games-cap window, not the global
+    // rate-limit window. We still honour whatever Retry-After Lichess gives, never
+    // multiply it; fall back to defaultRetryAfterSec when the body carries no
+    // machine-readable duration (the challenger variant has none).
     const DAILY_LIMIT_BODY = JSON.stringify({
         error: "You played 100 games against other bots today, please wait before challenging another bot.",
     });
@@ -2947,7 +2949,7 @@ describe("Daily bot-vs-bot games limit (429)", () => {
         });
     }
 
-    it("honours the Retry-After header and opens the shared rate-limit window", async () => {
+    it("honours the Retry-After header and opens the bot-games cap window (not the global one)", async () => {
         global.fetch = fetchWithDailyLimit(3600);
         const b = makeBot();
         b.botProfile = "self";
@@ -2956,22 +2958,45 @@ describe("Daily bot-vs-bot games limit (429)", () => {
             await b.huntNearRating(180, 0, true);
             throw new Error("expected huntNearRating to throw");
         } catch (err) {
-            expect(err).toBeInstanceOf(LichessRateLimited);
+            expect(err).toBeInstanceOf(LichessMaxBotGamesReached);
             expect(err.retryAfterSec).toBe(3600);
         }
 
-        // Every subsequent request is now gated for ~the hour Lichess asked for.
-        expect(b._isRateLimited()).toBe(true);
-        expect(b._rateLimitRemainingSec()).toBeGreaterThan(3550);
-        expect(b._rateLimitRemainingSec()).toBeLessThanOrEqual(3600);
+        // Bot challenges are gated for ~the hour Lichess asked for...
+        expect(b._isMaxBotGamesReached()).toBe(true);
+        expect(b._maxBotGamesRemainingSec()).toBeGreaterThan(3550);
+        expect(b._maxBotGamesRemainingSec()).toBeLessThanOrEqual(3600);
+        // ...but the global rate-limit window stays closed, so non-bot requests
+        // (e.g. tournament fetch/join) are not blocked.
+        expect(b._isRateLimited()).toBe(false);
     });
 
-    it("does NOT mark the opponent declined — it's our account-wide limit", async () => {
+    it("does NOT block human tournament hunting while the bot cap is active", async () => {
+        const b = makeBot();
+        b.botProfile = "self";
+        b._setMaxBotGamesLimit(3600);
+
+        let teamsFetched = false;
+        global.fetch = mockFetch(async (url) => {
+            if (url.includes("/api/team/of/self")) {
+                teamsFetched = true;
+                return {ok: true, json: async () => ([])};
+            }
+            return {ok: false};
+        });
+
+        // The bot-games cap must not stop us reaching the team-arena discovery
+        // path — huntTournaments resolves rather than throwing a rate-limit error.
+        await b.huntTournaments(1);
+        expect(teamsFetched).toBe(true);
+    });
+
+    it("does NOT mark the opponent declined — it's our account-wide cap", async () => {
         global.fetch = fetchWithDailyLimit(3600);
         const b = makeBot();
         b.botProfile = "self";
 
-        await expect(b.huntNearRating(180, 0, true)).rejects.toBeInstanceOf(LichessRateLimited);
+        await expect(b.huntNearRating(180, 0, true)).rejects.toBeInstanceOf(LichessMaxBotGamesReached);
         expect(b._inDeclineCooldown("A")).toBe(false);
     });
 
@@ -2984,19 +3009,19 @@ describe("Daily bot-vs-bot games limit (429)", () => {
             await b.huntNearRating(180, 0, true);
             throw new Error("expected huntNearRating to throw");
         } catch (err) {
-            expect(err).toBeInstanceOf(LichessRateLimited);
+            expect(err).toBeInstanceOf(LichessMaxBotGamesReached);
             expect(err.retryAfterSec).toBe(120);
         }
     });
 
     it("never multiplies the wait across repeated daily-limit 429s", () => {
         const b = makeBot();
-        b._setRateLimit(3600);
-        b._setRateLimit(3600);
-        b._setRateLimit(3600);
+        b._setMaxBotGamesLimit(3600);
+        b._setMaxBotGamesLimit(3600);
+        b._setMaxBotGamesLimit(3600);
         // We wait exactly what Lichess told us — not 3×, not exponential.
-        expect(b._rateLimitRemainingSec()).toBeGreaterThan(3550);
-        expect(b._rateLimitRemainingSec()).toBeLessThanOrEqual(3600);
+        expect(b._maxBotGamesRemainingSec()).toBeGreaterThan(3550);
+        expect(b._maxBotGamesRemainingSec()).toBeLessThanOrEqual(3600);
     });
 });
 
@@ -3127,16 +3152,45 @@ describe("Caching", () => {
 });
 
 describe("Tournament handling", () => {
-    it("fetchTournaments calls the tournament API", async () => {
+    it("fetchBotTeams calls the team-of API for the bot account", async () => {
+        bot.botProfile = "mybot";
         global.fetch = mockFetch(async(url) => {
-            if (url.includes("/api/tournament")) {
-                return {ok: true, json: async () => ({started: []})};
+            if (url.includes("/api/team/of/mybot")) {
+                return {ok: true, json: async () => ([{id: "team-a"}, {id: "team-b"}])};
             }
             return {ok: false};
         });
 
-        const res = await bot.fetchTournaments();
-        expect(res).toEqual({started: []});
+        const teams = await bot.fetchBotTeams();
+        expect(teams.map(t => t.id)).toEqual(["team-a", "team-b"]);
+    });
+
+    it("fetchTeamArenas streams a team's arenas as ndjson", async () => {
+        const arenas = [{id: "t1", status: 20}, {id: "t2", status: 10}];
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/api/team/team-a/arena")) {
+                return {ok: true, body: createMockStream(arenas)};
+            }
+            return {ok: false};
+        });
+
+        const res = await bot.fetchTeamArenas("team-a");
+        expect(res.map(t => t.id)).toEqual(["t1", "t2"]);
+    });
+
+    it("isEligibleForTournament reflects the Lichess verdict", async () => {
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/api/tournament/rejected")) {
+                return {ok: true, json: async () => ({verdicts: {accepted: false}})};
+            }
+            if (url.includes("/api/tournament/accepted")) {
+                return {ok: true, json: async () => ({verdicts: {accepted: true}})};
+            }
+            return {ok: false};
+        });
+
+        expect(await bot.isEligibleForTournament("accepted")).toBe(true);
+        expect(await bot.isEligibleForTournament("rejected")).toBe(false);
     });
 
     it("joinTournament calls the join API", async () => {
@@ -3152,28 +3206,57 @@ describe("Tournament handling", () => {
         expect(res).toEqual({ok: true});
     });
 
-    it("huntTournaments attempts to join multiple active tournaments", async () => {
+    it("huntTournaments joins eligible upcoming/ongoing standard arenas from the bot's teams", async () => {
+        bot.botProfile = "mybot";
+        const arenas = [
+            {id: "t1", status: 20, variant: {key: "standard"}, startsAt: 100},   // ongoing, eligible
+            {id: "t2", status: 20, variant: {key: "chess960"}, startsAt: 200},   // wrong variant
+            {id: "t3", status: 30, variant: {key: "standard"}, startsAt: 300},   // finished
+            {id: "t4", status: 10, variant: {key: "standard"}, startsAt: 400},   // upcoming, not eligible
+        ];
         global.fetch = mockFetch(async(url) => {
-            if (url === "https://lichess.org/api/tournament") {
-                return {ok: true, json: async () => ({
-                    started: [
-                        {id: "t1", variant: {key: "standard"}},
-                        {id: "t2", variant: {key: "chess960"}}, // skipped
-                        {id: "t3", variant: {key: "standard"}},
-                    ]
-                })};
+            if (url.includes("/api/team/of/mybot")) {
+                return {ok: true, json: async () => ([{id: "team-a"}])};
+            }
+            if (url.includes("/api/team/team-a/arena")) {
+                return {ok: true, body: createMockStream(arenas)};
             }
             if (url.includes("/join")) {
                 return {ok: true, json: async () => ({ok: true})};
+            }
+            if (url.includes("/api/tournament/t4")) {
+                return {ok: true, json: async () => ({verdicts: {accepted: false}})};
+            }
+            if (url.includes("/api/tournament/")) {
+                return {ok: true, json: async () => ({verdicts: {accepted: true}})};
             }
             return {ok: false};
         });
 
         await bot.huntTournaments(2);
 
-        expect(bot.joinedTournaments.has("t1")).toBe(true);
-        expect(bot.joinedTournaments.has("t3")).toBe(true);
-        expect(bot.joinedTournaments.has("t2")).toBe(false);
+        expect(bot.joinedTournaments.has("t1")).toBe(true);  // joined
+        expect(bot.joinedTournaments.has("t2")).toBe(false); // wrong variant — never a candidate
+        expect(bot.joinedTournaments.has("t3")).toBe(false); // finished — never a candidate
+        expect(bot.joinedTournaments.has("t4")).toBe(true);  // marked seen but skipped (ineligible)
+    });
+
+    it("huntTournaments does nothing when the bot is in no teams", async () => {
+        bot.botProfile = "mybot";
+        let joinAttempted = false;
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/api/team/of/mybot")) {
+                return {ok: true, json: async () => ([])};
+            }
+            if (url.includes("/join")) {
+                joinAttempted = true;
+                return {ok: true, json: async () => ({ok: true})};
+            }
+            return {ok: false};
+        });
+
+        await bot.huntTournaments(2);
+        expect(joinAttempted).toBe(false);
     });
 });
 

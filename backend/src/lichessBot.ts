@@ -87,6 +87,7 @@ export class LichessBot {
     huntAcceptTimeoutMs: number
     defaultRetryAfterSec: number
     rateLimitedUntil: number
+    maxBotGamesUntil: number
     apiTransport: ApiTransport
     authHeader: Record<string, string>
     formHeaders: Record<string, string>
@@ -126,10 +127,15 @@ export class LichessBot {
         // header. Kept conservative so we don't immediately re-trigger.
         this.defaultRetryAfterSec = options.defaultRetryAfterSec ?? 150;
 
-        // Shared rate-limit gate. When Lichess returns 429 (including the
-        // daily-games limit), we honour its Retry-After: every code path checks
-        // this before issuing a request so callers don't each burn a fresh 429.
+        // Global rate-limit gate. Set only by a true API 429 ("too many
+        // requests"). Every request path honours it, since the whole account is
+        // throttled until its Retry-After expires.
         this.rateLimitedUntil = 0;
+
+        // Daily bot-games cap gate. Set only by LichessMaxBotGamesReached. This
+        // blocks bot challenges/hunts but NOT human tournament play, so only the
+        // bot-hunting paths consult it — tournament fetch/join ignore it.
+        this.maxBotGamesUntil = 0;
 
         this.apiTransport = options.apiTransport ?? new ApiTransport({
             token: this.token,
@@ -213,17 +219,14 @@ export class LichessBot {
         const playBots = this.autoplay.opponentType === "bots" || this.autoplay.opponentType === "both";
         const playHumans = this.autoplay.opponentType === "humans" || this.autoplay.opponentType === "both";
 
-        // Honour any in-progress rate-limit window without even firing a hunt.
+        // A true API rate-limit throttles every request — even tournament joins —
+        // so honour it without firing any hunt at all.
         if (this._isRateLimited()) {
-            if (!playHumans) {
-                const remainingSec = this._rateLimitRemainingSec();
-                const waitMs = remainingSec * 1000 + 500;
-                this.notifier.warn("[Autoplay] Rate-limited; skipping tick", {remainingSec, waitMs});
-                this.autoplay.timer = setTimeout(() => this._tickAutoplay(), waitMs);
-                return;
-            } else if (playBots) {
-                this.notifier.info("[Autoplay] Rate-limited for bots; falling back to human tournaments");
-            }
+            const remainingSec = this._rateLimitRemainingSec();
+            const waitMs = remainingSec * 1000 + 500;
+            this.notifier.warn("[Autoplay] Rate-limited; skipping tick", {remainingSec, waitMs});
+            this.autoplay.timer = setTimeout(() => this._tickAutoplay(), waitMs);
+            return;
         }
 
         this.autoplay.huntInFlight = true;
@@ -232,13 +235,19 @@ export class LichessBot {
 
         const totalSlots = Math.max(1, this.autoplay.target - this.activeGames.size);
 
-        const botSlots = !playBots || this._isRateLimited() ? 0 
-            : !playHumans ? totalSlots 
-            : Math.ceil(totalSlots / 2);
-            
-        const humanSlots = totalSlots - botSlots;
+        // Direct bot challenges are blocked once we hit the daily bot-games cap.
+        // Tournament play is NOT (lila only enforces the cap on the challenge
+        // path), so it keeps producing bot games and serves as the fallback.
+        const botCapped = this._isMaxBotGamesReached();
+        if (botCapped && playBots) {
+            this.notifier.info("[Autoplay] Bot challenges capped for the day; relying on tournament play");
+        }
 
-        let huntPromise = Promise.resolve();
+        const botSlots = !playBots || botCapped ? 0
+            : !playHumans ? totalSlots
+            : Math.ceil(totalSlots / 2);
+
+        let huntPromise: Promise<unknown> = Promise.resolve();
 
         if (botSlots > 0) {
             huntPromise = mode === "weakest"
@@ -261,17 +270,15 @@ export class LichessBot {
         })
         .finally(async () => {
             if (!this.autoplay) return;
-            
-            let remainingForHumans = humanSlots;
-            
-            if (playHumans) {
-                const currentOpenSlots = Math.max(0, this.autoplay.target - this.activeGames.size);
-                remainingForHumans = Math.max(humanSlots, currentOpenSlots);
-            }
-            
-            if (remainingForHumans > 0 && playHumans) {
+
+            // Fill whatever direct challenges couldn't with tournament play. This
+            // runs even when bot-capped — it's the only way to keep playing bots
+            // past the cap — so it's gated on wanting any games at all, not on
+            // bot-cap state.
+            const openSlots = Math.max(0, this.autoplay.target - this.activeGames.size);
+            if (openSlots > 0 && (playBots || playHumans)) {
                 try {
-                    await this.huntTournaments(remainingForHumans);
+                    await this.huntTournaments(openSlots);
                 } catch (err) {
                     this.notifier.info(`[Autoplay] Hunt tournaments failed (${err.message})`);
                 }
@@ -280,12 +287,10 @@ export class LichessBot {
             if (!this.autoplay) return;
             this.autoplay.huntInFlight = false;
 
-            let wait = 10_000;
-            
-            if (this._isRateLimited() && !playHumans) {
-                wait = this._rateLimitRemainingSec() * 1000 + 500;
-            }
-            
+            // While bot-capped, direct challenges are dead weight — poll a bit
+            // slower so we don't hammer the team/arena endpoints for hours, but
+            // still often enough to catch newly-started tournaments.
+            const wait = this._isMaxBotGamesReached() ? 60_000 : 10_000;
             this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
         });
     }
@@ -297,12 +302,32 @@ export class LichessBot {
             const file = Bun.file("lichess-rate-limit.json");
             if (await file.exists()) {
                 const data = await file.json();
+
+                // Files written before the bot-cap/rate-limit split only carry
+                // `rateLimitedUntil`. In practice that long window was always the
+                // daily bot-games cap, so migrate it there — otherwise it would
+                // wrongly keep blocking human tournament hunting after a restart.
+                if (data.maxBotGamesUntil === undefined) {
+                    if (data.rateLimitedUntil && data.rateLimitedUntil > this._now()) {
+                        this.maxBotGamesUntil = data.rateLimitedUntil;
+                        const remainingSec = Math.ceil((this.maxBotGamesUntil - this._now()) / 1000);
+                        this.notifier.info(`[Bot] Migrated legacy rate-limit state to bot-games cap: ${remainingSec}s`);
+                        await this._saveRateLimitState().catch(() => {});
+                    }
+                    return;
+                }
+
                 if (data.rateLimitedUntil && data.rateLimitedUntil > this._now()) {
-                    // Survive a restart mid-ban (e.g. the daily-games limit) so we
-                    // don't immediately fire a fresh request and eat another 429.
+                    // Survive a restart mid-ban so we don't immediately fire a
+                    // fresh request and eat another 429.
                     this.rateLimitedUntil = data.rateLimitedUntil;
                     const remainingSec = Math.ceil((this.rateLimitedUntil - this._now()) / 1000);
                     this.notifier.info(`[Bot] Restored rate limit state from disk: rate-limited for ${remainingSec}s`);
+                }
+                if (data.maxBotGamesUntil && data.maxBotGamesUntil > this._now()) {
+                    this.maxBotGamesUntil = data.maxBotGamesUntil;
+                    const remainingSec = Math.ceil((this.maxBotGamesUntil - this._now()) / 1000);
+                    this.notifier.info(`[Bot] Restored bot-games cap from disk: ${remainingSec}s`);
                 }
             }
         } catch (err) {
@@ -313,7 +338,7 @@ export class LichessBot {
     async _saveRateLimitState() {
         if (process.env.NODE_ENV === "test") return;
         try {
-            const data = {rateLimitedUntil: this.rateLimitedUntil};
+            const data = {rateLimitedUntil: this.rateLimitedUntil, maxBotGamesUntil: this.maxBotGamesUntil};
             await Bun.write("lichess-rate-limit.json", JSON.stringify(data));
         } catch (err) {
             this.notifier.error("[Bot] Failed to save rate limit state:", err);
@@ -937,13 +962,42 @@ export class LichessBot {
         return ms > 0 ? Math.ceil(ms / 1000) : 0;
     }
 
-    // Honour Lichess's Retry-After directly: hold off all requests until the
-    // window expires. Daily-games limits arrive as a 429 with a long Retry-After
-    // and are handled by exactly the same path.
+    _isMaxBotGamesReached() {
+        return this.maxBotGamesUntil > this._now();
+    }
+
+    _maxBotGamesRemainingSec() {
+        const ms = this.maxBotGamesUntil - this._now();
+        return ms > 0 ? Math.ceil(ms / 1000) : 0;
+    }
+
+    // Guard for bot-hunting paths. Throws the matching error class so callers
+    // log the right reason; the global limit takes precedence as it's stricter.
+    _throwIfBotBlocked() {
+        if (this._isRateLimited()) {
+            throw new LichessRateLimited(this._rateLimitRemainingSec());
+        }
+        if (this._isMaxBotGamesReached()) {
+            throw new LichessMaxBotGamesReached(this._maxBotGamesRemainingSec());
+        }
+    }
+
+    // Honour Lichess's Retry-After for a true 429: hold off ALL requests until
+    // the window expires.
     _setRateLimit(retryAfterSec) {
         const candidate = this._now() + retryAfterSec * 1000;
         if (candidate > this.rateLimitedUntil) this.rateLimitedUntil = candidate;
         this.notifier.warn(`[Lichess API] Rate-limited for ${retryAfterSec}s`);
+        this._saveRateLimitState().catch(() => {
+        });
+    }
+
+    // Honour the daily bot-games cap: hold off bot challenges/hunts until reset,
+    // while leaving human tournament play available.
+    _setMaxBotGamesLimit(retryAfterSec) {
+        const candidate = this._now() + retryAfterSec * 1000;
+        if (candidate > this.maxBotGamesUntil) this.maxBotGamesUntil = candidate;
+        this.notifier.warn(`[Lichess API] Max bot games reached; bot challenges paused for ${retryAfterSec}s`);
         this._saveRateLimitState().catch(() => {
         });
     }
@@ -1001,9 +1055,7 @@ export class LichessBot {
         try {
             for (const target of candidates) {
                 if (winners.length >= slots) break;
-                if (this._isRateLimited()) {
-                    throw new LichessRateLimited(this._rateLimitRemainingSec());
-                }
+                this._throwIfBotBlocked();
 
                 let challenge = null;
                 try {
@@ -1082,9 +1134,7 @@ export class LichessBot {
     // by closeness in rating, until `count` games have started. `count` is how
     // many open slots autoplay wants filled (1 for a manual one-off challenge).
     async huntNearRating(limit, increment, rated = true, {window = 200, count = 1, poolSize = 80, maxWindow = 2000} = {}) {
-        if (this._isRateLimited()) {
-            throw new LichessRateLimited(this._rateLimitRemainingSec());
-        }
+        this._throwIfBotBlocked();
         const perf = this._performanceFromTimeControl(limit, increment);
         const {rating: myRating, prov} = await this._fetchMyRating(perf);
         this.notifier.info(`[Hunt] My ${perf} rating: ${myRating}${prov ? " (provisional)" : ""}; window ±${window} (max ±${maxWindow})`);
@@ -1163,9 +1213,7 @@ export class LichessBot {
     }
 
     async huntWeakestBot(limit, increment, rated = true, count = 1) {
-        if (this._isRateLimited()) {
-            throw new LichessRateLimited(this._rateLimitRemainingSec());
-        }
+        this._throwIfBotBlocked();
         this.notifier.info(`Hunting weakest bots (${limit}+${increment}, ${rated ? "rated" : "casual"}, up to ${count})...`);
 
         const bots = await this._fetchOnlineBots(500);
@@ -1202,12 +1250,49 @@ export class LichessBot {
         throw new Error("Hunt failed — all candidates ignored our challenges.");
     }
 
-    async fetchTournaments() {
-        const res = await this._lichessFetch("https://lichess.org/api/tournament");
-        
-        if (!res.ok) throw new Error("Failed to fetch tournaments");
-        
+    // Teams the bot belongs to. Bots are barred from official Lichess arenas, so
+    // the only tournaments we can join are team arenas run by a team we're in.
+    async fetchBotTeams() {
+        if (!this.botProfile) return [];
+        const res = await this._lichessFetch(`https://lichess.org/api/team/of/${this.botProfile}`, {
+            headers: this.authHeader,
+        });
+        if (!res.ok) throw new Error(`Failed to fetch teams for ${this.botProfile}: HTTP ${res.status}`);
         return res.json();
+    }
+
+    // Arenas created by a team, as an ndjson stream. Same body-read guard as
+    // _fetchOnlineBots so a stalled connection can't hang the whole hunt.
+    async fetchTeamArenas(teamId, max = 10) {
+        const res = await this._lichessFetch(`https://lichess.org/api/team/${teamId}/arena?max=${max}`, {
+            headers: {Accept: "application/x-ndjson"},
+        });
+        if (!res.ok) throw new Error(`Failed to fetch arenas for team ${teamId}: HTTP ${res.status}`);
+
+        const arenas = [];
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(new Error("Team-arena stream timed out")), 15000);
+        try {
+            await this.readNdjsonStream(res.body, controller.signal, (t) => arenas.push(t));
+        } finally {
+            clearTimeout(timeoutId);
+        }
+        if (controller.signal.aborted) {
+            throw new Error(`Timed out streaming arenas for team ${teamId}`);
+        }
+        return arenas;
+    }
+
+    // Ask Lichess whether our account satisfies an arena's entry conditions
+    // (rating caps, min rated games, etc.) before we burn a join attempt.
+    // Returns true unless Lichess explicitly says we're rejected.
+    async isEligibleForTournament(tournamentId) {
+        const res = await this._lichessFetch(`https://lichess.org/api/tournament/${tournamentId}`, {
+            headers: this.authHeader,
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        return data?.verdicts?.accepted !== false;
     }
 
     async joinTournament(tournamentId) {
@@ -1230,25 +1315,78 @@ export class LichessBot {
 
     async huntTournaments(slots) {
         this.notifier.info(`[Hunt] Hunting for tournaments to fill ${slots} slot(s)...`);
-        let data;
-        try {
-            data = await this.fetchTournaments();
-        } catch (err) {
-            if (err instanceof LichessRateLimited) throw err;
-            throw err;
+
+        if (!this.botProfile) {
+            this.notifier.info("[Hunt] No bot profile resolved yet; skipping tournament hunt");
+            return;
         }
 
-        if (!data || !data.started) return;
+        let teams;
+        try {
+            teams = await this.fetchBotTeams();
+        } catch (err) {
+            if (err instanceof LichessRateLimited) throw err;
+            this.notifier.warn(`[Hunt] Could not fetch bot teams: ${err.message}`);
+            return;
+        }
 
-        // Try to join active standard tournaments that the bot might be eligible for
-        const activeTournaments = data.started
-            .filter(t => t.variant && t.variant.key === "standard")
-            .slice(0, 5); // try the first 5
+        if (!teams || teams.length === 0) {
+            this.notifier.info("[Hunt] Bot is in no teams — no bot-eligible tournaments. Join a bot-friendly team (e.g. 'lichess-bots').");
+            return;
+        }
+
+        // Collect upcoming/ongoing standard arenas across every team the bot is
+        // in. status 10 = created (upcoming), 20 = started (ongoing); 30 = finished.
+        const candidates = [];
+        const seen = new Set();
+        for (const team of teams) {
+            const teamId = team?.id ?? team;
+            if (!teamId) continue;
+
+            let arenas;
+            try {
+                arenas = await this.fetchTeamArenas(teamId);
+            } catch (err) {
+                if (err instanceof LichessRateLimited) throw err;
+                this.notifier.warn(`[Hunt] Could not fetch arenas for team ${teamId}: ${err.message}`);
+                continue;
+            }
+
+            for (const t of arenas) {
+                if (!t?.id || seen.has(t.id)) continue;
+                seen.add(t.id);
+                if (t.status !== 10 && t.status !== 20) continue;
+                if (t.variant && t.variant.key !== "standard") continue;
+                if (this.joinedTournaments.has(t.id)) continue;
+                candidates.push(t);
+            }
+        }
+
+        if (candidates.length === 0) {
+            this.notifier.info("[Hunt] No upcoming/ongoing standard team arenas to join right now");
+            return;
+        }
+
+        // Soonest first, so we fill slots with arenas that are live or imminent.
+        candidates.sort((a, b) => (a.startsAt ?? 0) - (b.startsAt ?? 0));
 
         let joined = 0;
-        for (const t of activeTournaments) {
+        for (const t of candidates) {
             if (joined >= slots) break;
-            if (this.joinedTournaments.has(t.id)) continue;
+
+            let eligible = true;
+            try {
+                eligible = await this.isEligibleForTournament(t.id);
+            } catch (err) {
+                if (err instanceof LichessRateLimited) throw err;
+                // Couldn't read the verdict — let the join attempt be the arbiter.
+            }
+            if (!eligible) {
+                this.notifier.info(`[Hunt] Skipping ${t.id} (${t.fullName}) — bot not eligible`);
+                this.joinedTournaments.add(t.id);
+                continue;
+            }
+
             try {
                 this.notifier.info(`[Hunt] Attempting to join tournament ${t.id} (${t.fullName})...`);
                 await this.joinTournament(t.id);
@@ -1257,7 +1395,6 @@ export class LichessBot {
                 joined++;
             } catch (err) {
                 if (err instanceof LichessRateLimited) throw err;
-                // If it's a 400 or other failure, we likely can't join this tournament
                 this.notifier.warn(`[Hunt] Failed to join tournament ${t.id}: ${err.message}`);
                 this.joinedTournaments.add(t.id); // add so we don't spam it
             }
@@ -1296,9 +1433,15 @@ export class LichessBot {
             const error = await LichessRateLimited.fromResponse(res, this.defaultRetryAfterSec);
             this.notifier.error(`[Lichess API] 429 Rate Limited. Response body: ${error.bodyText}`);
 
-            this._setRateLimit(error.retryAfterSec);
-
-            error.retryAfterSec = this._rateLimitRemainingSec() || error.retryAfterSec;
+            // The daily bot-games cap blocks only bot challenges, so it lands in
+            // its own window; a generic 429 throttles the whole account.
+            if (error instanceof LichessMaxBotGamesReached) {
+                this._setMaxBotGamesLimit(error.retryAfterSec);
+                error.retryAfterSec = this._maxBotGamesRemainingSec() || error.retryAfterSec;
+            } else {
+                this._setRateLimit(error.retryAfterSec);
+                error.retryAfterSec = this._rateLimitRemainingSec() || error.retryAfterSec;
+            }
             throw error;
         }
         return res;

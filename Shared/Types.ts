@@ -96,6 +96,7 @@ export interface LichessBotOptions {
     huntAcceptTimeoutMs?: number
     defaultRetryAfterSec?: number
     rateLimitedUntil?: number;
+    maxBotGamesUntil?: number;
     apiTransport?: ApiTransport;
     declineCooldownMs?: number;
 }

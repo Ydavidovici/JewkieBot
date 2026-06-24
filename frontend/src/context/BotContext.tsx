@@ -3,103 +3,50 @@ import { health, getLichessStatus } from "../services/api.js";
 
 const BotContext = createContext(null);
 
-const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-const isCloud = hostname === 'jewkiebot.dev';
+const hostname = typeof window !== "undefined" ? window.location.hostname : "localhost";
+export const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
 
-const URLS = {
-    'prod': isCloud ? 'https://jewkiebot.dev' : `http://${hostname}:8000`,
-    'dev': isCloud ? 'https://jewkiebot.dev/dev' : `http://${hostname}:8001`,
-    'local': `http://${hostname}:8000`,
-};
+// The environment is implied by the origin you're on — `dev.*` is the dev bot,
+// localhost is local, anything else is prod. There is no in-app target switcher:
+// each backend serves its own branch's frontend and same-origin API calls hit it.
+const env = isLocal ? "local" : hostname.startsWith("dev.") ? "dev" : "prod";
 
-const DB_URLS = {
-    'prod': isCloud ? 'https://jewkiebot.dev' : `http://${hostname}:4001`,
-    'dev': isCloud ? 'https://jewkiebot.dev/dev' : `http://${hostname}:4001`,
-    'local': `http://${hostname}:4001`,
-};
+// Empty base = same origin (the backend that served this page). For local Vite
+// dev the backend is on a different port, so allow overrides.
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+const DB_URL = import.meta.env.VITE_DB_URL ?? "";
 
 export const BotProvider = ({ children }) => {
-    // Determine the active target: 'prod', 'dev', or 'local'
-    const [botTarget, setBotTarget] = useState("local");
-    
-    const activeUrl = URLS[botTarget];
-    const activeDbUrl = DB_URLS[botTarget];
+    const [status, setStatus] = useState({ health: null, lichess: null, error: null, lastChecked: null });
 
-    // Store status objects for both environments
-    const [statuses, setStatuses] = useState({
-        prod: {
-            health: null,
-            lichess: null,
-            error: null,
-            lastChecked: null
-        },
-        dev: {
-            health: null,
-            lichess: null,
-            error: null,
-            lastChecked: null
-        },
-        local: {
-            health: null,
-            lichess: null,
-            error: null,
-            lastChecked: null
-        }
-    });
-
-    const fetchStatusForTarget = useCallback(async (target, url) => {
-        try {
-            // We use Promise.all to fetch health and lichess parallelly, without failing entirely if one errors.
-            const [healthData, lichessData] = await Promise.all([
-                health(url).catch(e => ({ error: true, message: e.message })),
-                getLichessStatus(url).catch(e => ({ error: true, message: e.message }))
-            ]);
-
-            setStatuses(prev => ({
-                ...prev,
-                [target]: {
-                    health: healthData.error ? null : healthData,
-                    lichess: lichessData.error ? null : lichessData,
-                    error: healthData.error ? healthData.message : null, // Surface health error primarily
-                    lastChecked: new Date()
-                }
-            }));
-        } catch (err) {
-            setStatuses(prev => ({
-                ...prev,
-                [target]: {
-                    health: null,
-                    lichess: null,
-                    error: err.message,
-                    lastChecked: new Date()
-                }
-            }));
-        }
+    const refresh = useCallback(async () => {
+        const [healthData, lichessData] = await Promise.all([
+            health(API_URL).catch(e => ({ error: true, message: e.message })),
+            getLichessStatus(API_URL).catch(e => ({ error: true, message: e.message })),
+        ]);
+        setStatus({
+            health: healthData.error ? null : healthData,
+            lichess: lichessData.error ? null : lichessData,
+            error: healthData.error ? healthData.message : null,
+            lastChecked: new Date(),
+        });
     }, []);
 
-    // Background polling effect - pings both targets every 3 seconds
+    // Poll the single backend that serves this app.
     useEffect(() => {
-        const poll = () => {
-            fetchStatusForTarget("prod", URLS.prod);
-            fetchStatusForTarget("dev", URLS.dev);
-            fetchStatusForTarget("local", URLS.local);
-        };
-
-        poll(); // Trigger initial fetch
-        const intervalId = setInterval(poll, 3000);
-
-        return () => clearInterval(intervalId); // Cleanup on unmount
-    }, [fetchStatusForTarget]);
+        refresh();
+        const intervalId = setInterval(refresh, 3000);
+        return () => clearInterval(intervalId);
+    }, [refresh]);
 
     const value = {
-        botTarget,
-        setBotTarget,
-        urls: URLS,
-        activeUrl,
-        activeDbUrl,
-        statuses,
-        activeStatus: statuses[botTarget],
-        refreshActive: () => fetchStatusForTarget(botTarget, activeUrl)
+        env,                  // "prod" | "dev" | "local"
+        botTarget: env,       // back-compat alias for pages that label the env
+        isLocal,
+        activeUrl: API_URL,   // same-origin unless overridden for local dev
+        activeDbUrl: DB_URL,
+        activeStatus: status,
+        refreshActive: refresh,
     };
 
     return (

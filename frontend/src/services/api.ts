@@ -1,6 +1,15 @@
 import axios from "axios";
 
-const DEFAULT_BASE_URL = import.meta.env.VITE_API_URL ?? "http://192.168.1.51:8000";
+// Empty = same origin: the page calls whichever backend served it (prod on
+// jewkiebot.dev, dev on dev.jewkiebot.dev). VITE_API_URL overrides for local
+// Vite dev, where the frontend and backend are on different ports.
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+// The control API sits behind the DSS auth gatekeeper (nginx auth_request). A
+// 401 means "no valid session" — the LoginGate registers a handler here and
+// shows the login overlay when that happens.
+let unauthorizedHandler: (() => void) | null = null;
+export const onUnauthorized = (fn: () => void) => { unauthorizedHandler = fn; };
 
 /**
  * Generic API Request Handler
@@ -14,6 +23,7 @@ export const request = async (endpoint, {method = "GET", data, headers = {}, bas
             url: `${targetUrl}${endpoint}`,
             method,
             data,
+            withCredentials: true,   // send/receive the auth session cookie
             headers: {
                 "Content-Type": "application/json",
                 ...headers,
@@ -23,10 +33,17 @@ export const request = async (endpoint, {method = "GET", data, headers = {}, bas
 
         return response.data;
     } catch (error) {
+        if (error?.response?.status === 401) unauthorizedHandler?.();
         console.error(`API Request failed: ${method} ${endpoint} against ${baseUrl || DEFAULT_BASE_URL}`, error);
         throw error;
     }
 };
+
+export const login = (email, password, baseUrl = null) =>
+    request("/api/auth/login", { method: "POST", data: { email, password }, baseUrl });
+
+export const logout = (baseUrl = null) =>
+    request("/api/auth/logout", { method: "POST", baseUrl });
 
 export const startGame = (player1_id, player2_id, baseUrl = null) =>
     request("/api/start_game", {
@@ -179,20 +196,34 @@ export const setEngineOption = (name, value, baseUrl = null) =>
         baseUrl
     });
 
+// --- Self-Play Endpoints ---
+export const getSelfPlayVersions = (baseUrl = null) =>
+    request("/api/selfplay/versions", {
+        method: "GET",
+        baseUrl
+    });
+
+export const runSelfPlay = (options, baseUrl = null) =>
+    request("/api/selfplay/run", {
+        method: "POST",
+        data: options,
+        baseUrl
+    });
+
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || ""
     });
 
 export const getGameEvals = (gameId, dbUrl = null) =>
     request(`/api/v1/chess/games/${gameId}/evals`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || ""
     });
 
 export const getGameMoves = (gameId, dbUrl = null) =>
     request(`/api/v1/chess/games/${gameId}/moves`, {
         method: "GET",
-        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || "http://192.168.1.51:4001"
+        baseUrl: dbUrl || import.meta.env.VITE_DB_URL || ""
     });

@@ -54,63 +54,6 @@ export class EngineController {
         }
     }
 
-    runAnalysis = async (req: any, res: any): Promise<any> => {
-        if (!this.analyzer) {
-            return res.status(503).json({error: "Analysis not configured"});
-        }
-        if (this.analyzer.isRunning) {
-            return res.status(400).json({error: "Analysis already running"});
-        }
-
-        try {
-            const {playerName} = req.body;
-            const taskId = `analysis-${Date.now()}`;
-            
-            await this.taskManager.createTask(taskId, "teacher_analysis", {playerName});
-
-            res.json({status: "started", taskId});
-
-            (async () => {
-                try {
-                    const interval = setInterval(async () => {
-                        if (this.analyzer.isRunning) {
-                            await this.taskManager.updateTaskProgress(taskId, this.analyzer.progress);
-                        }
-                    }, 2000);
-
-                    await this.analyzer.analyzeAll(playerName || null);
-                    clearInterval(interval);
-
-                    await this.taskManager.updateTaskStatus(taskId, "COMPLETED", {
-                        gamesAnalyzed: this.analyzer.progress.done,
-                    });
-                } catch (err) {
-                    await this.taskManager.updateTaskStatus(taskId, "FAILED", {error: err.message});
-                }
-            })();
-        } catch (err) {
-            res.status(500).json({error: err.message});
-        }
-    }
-
-    stopAnalysis = async (req: any, res: any): Promise<any> => {
-        if (!this.analyzer) {
-            return res.status(503).json({error: "Analysis not configured"});
-        }
-        if (!this.analyzer.isRunning) {
-            return res.json({status: "not_running"});
-        }
-        await this.analyzer.stop();
-        res.json({status: "stopped"});
-    }
-
-    getAnalysisStatus = async (req: any, res: any): Promise<any> => {
-        if (!this.analyzer) {
-            return res.status(503).json({error: "Analysis not configured"});
-        }
-        res.json({running: this.analyzer.isRunning, progress: this.analyzer.progress});
-    }
-
     go = async (req: any, res: any): Promise<any> => {
         try {
             const {fen, moves, options} = req.body ?? {};
@@ -256,14 +199,4 @@ export class EngineController {
         }
     }
 
-    getAnalysisStats = async (req: any, res: any): Promise<any> => {
-        if (!this.analyzer) return res.status(503).json({error: "Analysis not configured"});
-
-        try {
-            res.json(await this.analyzer.getStats());
-        } catch (err) {
-            console.error("[Analysis] getStats failed:", err);
-            res.status(500).json({error: err.message});
-        }
-    }
 }
