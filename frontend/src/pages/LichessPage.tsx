@@ -37,7 +37,8 @@ export default function LichessPage() {
         mode: "near",        // Matchmaking mode
         window: 200,         // Rating window
         whiteOpeningId: "balanced",
-        blackOpeningId: "balanced"
+        blackOpeningId: "balanced",
+        opponentType: "both"
     });
 
     useEffect(() => {
@@ -51,7 +52,8 @@ export default function LichessPage() {
                 mode: activeStatus.lichess.autoplay.mode,
                 window: activeStatus.lichess.autoplay.window,
                 whiteOpeningId: activeStatus.lichess.autoplay.whiteOpeningId || "balanced",
-                blackOpeningId: activeStatus.lichess.autoplay.blackOpeningId || "balanced"
+                blackOpeningId: activeStatus.lichess.autoplay.blackOpeningId || "balanced",
+                opponentType: activeStatus.lichess.autoplay.opponentType || "both"
             }));
         }
     }, [activeStatus?.lichess?.autoplay]);
@@ -178,6 +180,14 @@ export default function LichessPage() {
                                 <option value="near">Near My Rating</option>
                                 <option value="weakest">Hunt Weakest Bot</option>
                                 <option value="random">Random Open</option>
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponent Type</label>
+                            <select value={autoplayConfig.opponentType} onChange={(e) => setAutoplayConfig({...autoplayConfig, opponentType: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-2.5 rounded-lg outline-none focus:ring-1 focus:ring-yellow-500" disabled={activeStatus?.lichess?.autoplay?.enabled}>
+                                <option value="both">Both (Default)</option>
+                                <option value="bots">Bots Only</option>
+                                <option value="humans">Humans Only (Tournaments)</option>
                             </select>
                         </div>
                         <div className="space-y-2">

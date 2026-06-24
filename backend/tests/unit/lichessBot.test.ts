@@ -43,7 +43,7 @@ const mockDbClient = {
 
 mock.module("../../src/dbClient.js", () => ({dbClient: mockDbClient}));
 
-const {LichessBot, LichessRateLimited, normalizeMove, mapResult, extractTime} = await import("../../src/lichessBot.ts");
+const {LichessBot, LichessRateLimited, LichessMaxBotGamesReached, normalizeMove, mapResult, extractTime} = await import("../../src/lichessBot.ts");
 
 class MockEngine extends EventEmitter {
     start: any;
@@ -2759,7 +2759,7 @@ describe("Autoplay honours LichessRateLimited", () => {
         });
         const b = new LichessBot("t", () => engine, {huntPollIntervalMs: 1, huntAcceptTimeoutMs: 50});
         b.botProfile = "self";
-        b.autoplay = {limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, whiteOpeningId: null, blackOpeningId: null, huntInFlight: false, timer: null};
+        b.autoplay = {limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, whiteOpeningId: null, blackOpeningId: null, opponentType: "both", huntInFlight: false, timer: null};
 
         b._tickAutoplay();
         // Wait long enough for the hunt to throw and the catch handler to run.
@@ -2787,7 +2787,7 @@ describe("Autoplay honours LichessRateLimited", () => {
         });
         const b = new LichessBot("t", () => engine, {huntPollIntervalMs: 1, huntAcceptTimeoutMs: 50});
         b.botProfile = "self";
-        b.autoplay = {limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, whiteOpeningId: null, blackOpeningId: null, huntInFlight: false, timer: null};
+        b.autoplay = {limit: 180, increment: 0, rated: true, target: 1, mode: "near", window: 200, whiteOpeningId: null, blackOpeningId: null, opponentType: "both", huntInFlight: false, timer: null};
 
         b._tickAutoplay();
         await new Promise(r => setTimeout(r, 50));
@@ -3123,5 +3123,76 @@ describe("Caching", () => {
         const b3 = await cacheBot._fetchOnlineBots(500);
         expect(b3.length).toBe(1);
         expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("Tournament handling", () => {
+    it("fetchTournaments calls the tournament API", async () => {
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/api/tournament")) {
+                return {ok: true, json: async () => ({started: []})};
+            }
+            return {ok: false};
+        });
+
+        const res = await bot.fetchTournaments();
+        expect(res).toEqual({started: []});
+    });
+
+    it("joinTournament calls the join API", async () => {
+        global.fetch = mockFetch(async(url, opts) => {
+            if (url.includes("/api/tournament/xyz/join")) {
+                expect(opts.method).toBe("POST");
+                return {ok: true, json: async () => ({ok: true})};
+            }
+            return {ok: false};
+        });
+
+        const res = await bot.joinTournament("xyz");
+        expect(res).toEqual({ok: true});
+    });
+
+    it("huntTournaments attempts to join multiple active tournaments", async () => {
+        global.fetch = mockFetch(async(url) => {
+            if (url === "https://lichess.org/api/tournament") {
+                return {ok: true, json: async () => ({
+                    started: [
+                        {id: "t1", variant: {key: "standard"}},
+                        {id: "t2", variant: {key: "chess960"}}, // skipped
+                        {id: "t3", variant: {key: "standard"}},
+                    ]
+                })};
+            }
+            if (url.includes("/join")) {
+                return {ok: true, json: async () => ({ok: true})};
+            }
+            return {ok: false};
+        });
+
+        await bot.huntTournaments(2);
+
+        expect(bot.joinedTournaments.has("t1")).toBe(true);
+        expect(bot.joinedTournaments.has("t3")).toBe(true);
+        expect(bot.joinedTournaments.has("t2")).toBe(false);
+    });
+});
+
+describe("LichessMaxBotGamesReached parsing", () => {
+    it("parses bot game limit error correctly", async () => {
+        const response = rateLimitResponse(100);
+        response.text = async () => '{"error":"You have reached the limit of bot games"}';
+        
+        const err = await LichessRateLimited.fromResponse(response);
+        expect(err.name).toBe("LichessMaxBotGamesReached");
+        expect(err.retryAfterSec).toBe(100);
+    });
+
+    it("parses normal rate limit error correctly", async () => {
+        const response = rateLimitResponse(50);
+        response.text = async () => '{"error":"Too many requests"}';
+        
+        const err = await LichessRateLimited.fromResponse(response);
+        expect(err.name).toBe("LichessRateLimited");
+        expect(err.retryAfterSec).toBe(50);
     });
 });

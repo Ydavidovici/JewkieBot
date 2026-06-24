@@ -109,6 +109,7 @@ export interface LichessAutoplayOptions {
     window?: number;
     whiteOpeningId?: string | null;
     blackOpeningId?: string | null;
+    opponentType?: "bots" | "humans" | "both";
 }
 
 // Resolved, running autoplay state stored on the bot (options + loop bookkeeping).
@@ -121,6 +122,7 @@ export interface LichessAutoplayState {
     window: number;
     whiteOpeningId: string | null;
     blackOpeningId: string | null;
+    opponentType: "bots" | "humans" | "both";
     timer: ReturnType<typeof setTimeout> | null;
     huntInFlight: boolean;
 }

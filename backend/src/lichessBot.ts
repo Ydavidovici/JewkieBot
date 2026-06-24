@@ -36,9 +36,25 @@ export class LichessRateLimited extends Error {
         const isExplicit = Number.isFinite(retryAfter) && retryAfter > 0;
         const seconds = isExplicit ? retryAfter : defaultRetryAfterSec;
         
-        const error = new LichessRateLimited(seconds, isExplicit);
+        const errorMsg = parsedBody?.error?.toLowerCase() || body.toLowerCase();
+        
+        const isBotLimit = (errorMsg.includes("bot") && errorMsg.includes("limit")) || 
+                           (errorMsg.includes("bot") && errorMsg.includes("games"));
+        
+        const error = isBotLimit
+            ? new LichessMaxBotGamesReached(seconds, isExplicit)
+            : new LichessRateLimited(seconds, isExplicit);
+        
         error.bodyText = body;
         return error;
+    }
+}
+
+export class LichessMaxBotGamesReached extends LichessRateLimited {
+    constructor(retryAfterSec, isExplicit = false) {
+        super(retryAfterSec, isExplicit);
+        this.name = "LichessMaxBotGamesReached";
+        this.message = `Lichess max bot games limit reached; retry after ${retryAfterSec}s`;
     }
 }
 
@@ -80,6 +96,7 @@ export class LichessBot {
     dbGameIds: Map<string, number>
     savedPlies: Map<string, number>
     gameOpenings: Map<string, any>
+    joinedTournaments: Set<string>
 
     // Always present, but null is a real state until set later.
     botProfile: string | null
@@ -136,27 +153,28 @@ export class LichessBot {
         this.dbGameIds = new Map();
         this.savedPlies = new Map();
         this.gameOpenings = new Map();
+        this.joinedTournaments = new Set();
 
         // Autoplay: when enabled, the bot fills free slots via huntWeakestBot.
         this.autoplay = null; // {limit, increment, rated, target, ...openings, timer, huntInFlight}
     }
 
-    startAutoplay({limit = 180, increment = 2, rated = true, target = 1, mode = "near", window = 200, whiteOpeningId = null, blackOpeningId = null}: LichessAutoplayOptions = {}) {
+    startAutoplay({limit = 180, increment = 2, rated = true, target = 3, mode = "near", window = 200, whiteOpeningId = null, blackOpeningId = null, opponentType = "both"}: LichessAutoplayOptions = {}) {
         this.stopAutoplay();
 
         // target = how many active games we'd like to keep going at once.
         // Capped by maxConcurrentGames as a safety.
         const cappedTarget = Math.min(target, this.maxConcurrentGames);
 
-        this.autoplay = {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId, timer: null, huntInFlight: false};
+        this.autoplay = {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId, opponentType, timer: null, huntInFlight: false};
 
-        this.notifier.info("[Autoplay] Autoplay enabled", {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId});
+        this.notifier.info("[Autoplay] Autoplay enabled", {limit, increment, rated, target: cappedTarget, mode, window, whiteOpeningId, blackOpeningId, opponentType});
 
         const whiteString = whiteOpeningId ? `white=${whiteOpeningId}` : "";
         const blackString = blackOpeningId ? `${whiteString ? ", " : ""}black=${blackOpeningId}` : "";
         const optionsString = whiteString || blackString ? `, ${whiteString}${blackString}` : "";
 
-        this.notifier.info(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}${optionsString})`);
+        this.notifier.info(`[Autoplay] Enabled (${limit}+${increment} ${rated ? "rated" : "casual"}, target=${cappedTarget}, mode=${mode}${mode === "near" ? `, window=±${window}` : ""}, opponentType=${opponentType}${optionsString})`);
         this._tickAutoplay();
     }
 
@@ -172,8 +190,8 @@ export class LichessBot {
 
     autoplayStatus() {
         if (!this.autoplay) return {enabled: false};
-        const {limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, huntInFlight} = this.autoplay;
-        return {enabled: true, limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, huntInFlight, active: this.activeGames.size};
+        const {limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, opponentType, huntInFlight} = this.autoplay;
+        return {enabled: true, limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, opponentType, huntInFlight, active: this.activeGames.size};
     }
 
     // Kick the autoplay loop. Idempotent. Called after every game ends and on a
@@ -192,43 +210,82 @@ export class LichessBot {
             return;
         }
 
+        const playBots = this.autoplay.opponentType === "bots" || this.autoplay.opponentType === "both";
+        const playHumans = this.autoplay.opponentType === "humans" || this.autoplay.opponentType === "both";
+
         // Honour any in-progress rate-limit window without even firing a hunt.
         if (this._isRateLimited()) {
-            const remainingSec = this._rateLimitRemainingSec();
-            const waitMs = remainingSec * 1000 + 500;
-            this.notifier.warn("[Autoplay] Rate-limited; skipping tick", {remainingSec, waitMs});
-            this.autoplay.timer = setTimeout(() => this._tickAutoplay(), waitMs);
-            return;
+            if (!playHumans) {
+                const remainingSec = this._rateLimitRemainingSec();
+                const waitMs = remainingSec * 1000 + 500;
+                this.notifier.warn("[Autoplay] Rate-limited; skipping tick", {remainingSec, waitMs});
+                this.autoplay.timer = setTimeout(() => this._tickAutoplay(), waitMs);
+                return;
+            } else if (playBots) {
+                this.notifier.info("[Autoplay] Rate-limited for bots; falling back to human tournaments");
+            }
         }
 
         this.autoplay.huntInFlight = true;
 
         const {limit, increment, rated, mode, window} = this.autoplay;
 
-        // Fill every open slot this tick instead of one game at a time.
-        const slots = Math.max(1, this.autoplay.target - this.activeGames.size);
+        const totalSlots = Math.max(1, this.autoplay.target - this.activeGames.size);
 
-        const huntPromise = mode === "weakest"
-            ? this.huntWeakestBot(limit, increment, rated, slots)
-            : this.huntNearRating(limit, increment, rated, {window, count: slots});
+        const botSlots = !playBots || this._isRateLimited() ? 0 
+            : !playHumans ? totalSlots 
+            : Math.ceil(totalSlots / 2);
+            
+        const humanSlots = totalSlots - botSlots;
+
+        let huntPromise = Promise.resolve();
+
+        if (botSlots > 0) {
+            huntPromise = mode === "weakest"
+                ? this.huntWeakestBot(limit, increment, rated, botSlots)
+                : this.huntNearRating(limit, increment, rated, {window, count: botSlots});
+        }
 
         huntPromise
         .catch(err => {
             // A 429 has already set rateLimitedUntil (via _lichessFetch), so the
             // reschedule below honours it. Any other failure (e.g. no candidate
             // bots) just means "try again on the next tick".
-            if (err instanceof LichessRateLimited) {
+            if (err instanceof LichessMaxBotGamesReached) {
+                this.notifier.warn("[Hunt] Max bot games reached", {retryAfterSec: err.retryAfterSec});
+            } else if (err instanceof LichessRateLimited) {
                 this.notifier.warn("[Hunt] Lichess rate limit", {retryAfterSec: err.retryAfterSec});
             } else {
-                this.notifier.info(`[Autoplay] Hunt failed (${err.message}); retrying`);
+                this.notifier.info(`[Autoplay] Hunt bots failed (${err.message}); retrying`);
             }
         })
-        .finally(() => {
+        .finally(async () => {
             if (!this.autoplay) return;
+            
+            let remainingForHumans = humanSlots;
+            
+            if (playHumans) {
+                const currentOpenSlots = Math.max(0, this.autoplay.target - this.activeGames.size);
+                remainingForHumans = Math.max(humanSlots, currentOpenSlots);
+            }
+            
+            if (remainingForHumans > 0 && playHumans) {
+                try {
+                    await this.huntTournaments(remainingForHumans);
+                } catch (err) {
+                    this.notifier.info(`[Autoplay] Hunt tournaments failed (${err.message})`);
+                }
+            }
 
+            if (!this.autoplay) return;
             this.autoplay.huntInFlight = false;
 
-            const wait = this._isRateLimited() ? this._rateLimitRemainingSec() * 1000 + 500 : 10_000;
+            let wait = 10_000;
+            
+            if (this._isRateLimited() && !playHumans) {
+                wait = this._rateLimitRemainingSec() * 1000 + 500;
+            }
+            
             this.autoplay.timer = setTimeout(() => this._tickAutoplay(), wait);
         });
     }
@@ -1143,6 +1200,68 @@ export class LichessBot {
         }
 
         throw new Error("Hunt failed — all candidates ignored our challenges.");
+    }
+
+    async fetchTournaments() {
+        const res = await this._lichessFetch("https://lichess.org/api/tournament");
+        
+        if (!res.ok) throw new Error("Failed to fetch tournaments");
+        
+        return res.json();
+    }
+
+    async joinTournament(tournamentId) {
+        const res = await this._lichessFetch(`https://lichess.org/api/tournament/${tournamentId}/join`, {
+            method: "POST",
+            headers: this.authHeader
+        });
+        
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText);
+        }
+        
+        try {
+            return await res.json();
+        } catch {
+            return { ok: true };
+        }
+    }
+
+    async huntTournaments(slots) {
+        this.notifier.info(`[Hunt] Hunting for tournaments to fill ${slots} slot(s)...`);
+        let data;
+        try {
+            data = await this.fetchTournaments();
+        } catch (err) {
+            if (err instanceof LichessRateLimited) throw err;
+            throw err;
+        }
+
+        if (!data || !data.started) return;
+
+        // Try to join active standard tournaments that the bot might be eligible for
+        const activeTournaments = data.started
+            .filter(t => t.variant && t.variant.key === "standard")
+            .slice(0, 5); // try the first 5
+
+        let joined = 0;
+        for (const t of activeTournaments) {
+            if (joined >= slots) break;
+            if (this.joinedTournaments.has(t.id)) continue;
+            try {
+                this.notifier.info(`[Hunt] Attempting to join tournament ${t.id} (${t.fullName})...`);
+                await this.joinTournament(t.id);
+                this.notifier.info(`[Hunt] Successfully joined tournament ${t.id}`);
+                this.joinedTournaments.add(t.id);
+                joined++;
+            } catch (err) {
+                if (err instanceof LichessRateLimited) throw err;
+                // If it's a 400 or other failure, we likely can't join this tournament
+                this.notifier.warn(`[Hunt] Failed to join tournament ${t.id}: ${err.message}`);
+                this.joinedTournaments.add(t.id); // add so we don't spam it
+            }
+        }
     }
 
     // FIXME: refactor for apiTransport

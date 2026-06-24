@@ -139,9 +139,10 @@ export class LichessController {
             window = 200,
             whiteOpeningId = null,
             blackOpeningId = null,
+            opponentType = "both",
         } = req.body ?? {};
 
-        this.lichessBotInstance.startAutoplay({limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId});
+        this.lichessBotInstance.startAutoplay({limit, increment, rated, target, mode, window, whiteOpeningId, blackOpeningId, opponentType});
 
         res.json({
             status: "success",
