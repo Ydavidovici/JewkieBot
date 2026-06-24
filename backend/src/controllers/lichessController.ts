@@ -1,4 +1,4 @@
-import {LichessBot} from "../lichessBot";
+import {LichessBot} from "../lichessBot.ts";
 
 export class LichessController {
     private lichessBotInstance: LichessBot | null = null;

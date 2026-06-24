@@ -5,8 +5,8 @@ void TimeManager::start(uint64_t millis_left, uint64_t inc, int mtg) {
     const int mtg_eff = (mtg <= 0) ? DEFAULT_MTG : mtg;
 
     const int64_t remaining =
-        (millis_left > static_cast<uint64_t>(SAFETY_MS))
-            ? static_cast<int64_t>(millis_left) - SAFETY_MS
+        (millis_left > static_cast<uint64_t>(MOVE_OVERHEAD_MS))
+            ? static_cast<int64_t>(millis_left) - MOVE_OVERHEAD_MS
             : 0;
 
     const int64_t max_alloc = static_cast<int64_t>(remaining * MAX_FRACTION) + static_cast<int64_t>(inc);

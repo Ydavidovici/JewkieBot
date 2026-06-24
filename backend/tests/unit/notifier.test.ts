@@ -1,9 +1,9 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES, WebhookTransport} from "../src/notifier.js";
-import {ApiTransport} from "../src/apiTransport.js";
+import {Notifier, wrapConsoleForNotifier, CONSOLE_WRAP_SKIP_PREFIXES, WebhookTransport} from "../../src/notifier.js";
+import {ApiTransport} from "../../src/apiTransport.js";
 
 describe("WebhookTransport", () => {
-    let originalEnv;
+    let originalEnv: Record<string, string | undefined>;
 
     beforeEach(() => {
         originalEnv = {
@@ -41,7 +41,7 @@ describe("WebhookTransport", () => {
         });
 
         expect(t.api.post).toHaveBeenCalled();
-        const payload = t.api.post.mock.calls[0][1];
+        const payload = (t.api.post as any).mock.calls[0][1];
         
         expect(payload.channel).toBe("notifications");
         expect(payload.status).toBe("success");
@@ -56,7 +56,7 @@ describe("WebhookTransport", () => {
 
         await t.send({level: "error", subject: "[EngineManager] Engine crashed"});
 
-        const payload = t.api.post.mock.calls[0][1];
+        const payload = (t.api.post as any).mock.calls[0][1];
         expect(payload.channel).toBe("notifications");
         expect(payload.status).toBe("error");
     });
@@ -98,7 +98,7 @@ describe("wrapConsoleForNotifier", () => {
 
     test("forwards console.log → notifier.info", () => {
         const events = [];
-        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}]});
+        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}] as any});
         console.log = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
 
@@ -110,7 +110,7 @@ describe("wrapConsoleForNotifier", () => {
 
     test("forwards console.warn → notifier.warn and .error → notifier.error", () => {
         const events = [];
-        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}]});
+        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}] as any});
         console.warn  = mock(() => {});
         console.error = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
@@ -137,7 +137,7 @@ describe("wrapConsoleForNotifier", () => {
 
     test("skips re-forwarding lines whose first arg starts with an internal prefix", () => {
         const events = [];
-        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}]});
+        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}] as any});
         console.error = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
 
@@ -150,7 +150,7 @@ describe("wrapConsoleForNotifier", () => {
 
     test("formats multiple args, including objects and Errors", () => {
         const events = [];
-        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}]});
+        const notifier = new Notifier({transports: [{send: (e) => events.push(e)}] as any});
         console.log = mock(() => {});
         restore = wrapConsoleForNotifier(notifier);
 

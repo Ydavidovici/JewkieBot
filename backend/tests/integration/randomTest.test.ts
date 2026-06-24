@@ -1,4 +1,4 @@
-import {UciEngine} from "../src/engineManager.ts";
+import {UciEngine} from "../../src/engineManager.ts";
 
 const engine = new UciEngine();
 
@@ -15,6 +15,9 @@ const move = await engine.go({
     blackTime: 600000,
     whiteIncrement: 0,
     blackIncrement: 0,
+    nodes: 0,
+    depth:0,
+    moveTime: 0
 });
 
 console.timeEnd("Move Calculation Time");

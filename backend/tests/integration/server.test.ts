@@ -78,15 +78,11 @@ class MockEngineManager { [key: string]: any;
     }
 }
 
-mock.module("../src/engineManager.js", () => ({
-    EngineManager: MockEngineManager,
-    UciEngine: MockUciEngine,
-    EngineCapReached: MockEngineCapReached,
-}));
-
-
-
-const { createApp } = await import("../src/server.ts");
+// No global mock.module here: createApp receives the engineManager,
+// lichessEngineFactory and BotClass via DI (below), so the real engine classes
+// are never instantiated. Mocking the module process-wide would leak the fakes
+// into other test files (e.g. engineManager.test.ts).
+const { createApp } = await import("../../src/server.ts");
 
 let server;
 let baseUrl;

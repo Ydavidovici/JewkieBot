@@ -2,9 +2,9 @@ import {ApiHealthResponse} from "../../Shared/Types.ts";
 import express from "express";
 import cors from "cors";
 import path from "node:path";
-import {EngineManager, UciEngine, EngineCapReached} from "./engineManager.ts";
-import {LichessBot} from "./lichessBot.js";
-import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport} from "./notifier";
+import {EngineManager, EngineCapReached} from "./engineManager.ts";
+import {LichessBot} from "./lichessBot.ts";
+import {Notifier, nullNotifier, wrapConsoleForNotifier, WebhookTransport, ConsoleTransport} from "./notifier";
 import {GameAnalyzer} from "./gameAnalyzer.js";
 import {taskManager} from "./taskManager";
 import {PgnManager} from "./pgnManager.js";
@@ -32,6 +32,22 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     }));
 
     app.use(express.json());
+
+    // Log every error response (status >= 400) including the body, so you can see
+    // why an API call failed from the terminal and any notifier transports.
+    app.use((req: any, res: any, next: any) => {
+        const origJson = res.json.bind(res);
+        res.json = (payload: any) => {
+            if (res.statusCode >= 400) {
+                notifier.error(`[API] ${req.method} ${req.originalUrl} → ${res.statusCode}`, {
+                    status: res.statusCode,
+                    body: payload,
+                });
+            }
+            return origJson(payload);
+        };
+        next();
+    });
 
     let lichessBotInstance = null;
 
@@ -96,6 +112,18 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
         res.sendFile(path.join(distPath, "index.html"));
     });
 
+    // Catch-all error handler. In Express 5 async handler rejections land here,
+    // so an unhandled throw no longer kills the connection (or the process) —
+    // it always logs and returns a JSON body the browser can display.
+    app.use((err: any, req: any, res: any, next: any) => {
+        notifier.error(`[API] Unhandled error on ${req.method} ${req.originalUrl}`, {
+            message: err?.message,
+            stack: err?.stack?.split("\n").slice(0, 5).join("\n"),
+        });
+        if (res.headersSent) return next(err);
+        res.status(500).json({error: err?.message ?? "Internal Server Error"});
+    });
+
     return {app, getBotInstance: () => lichessBotInstance, getAnalyzer: () => analyzer};
 }
 
@@ -138,10 +166,14 @@ if (import.meta.main) {
         transports.push(webhookTransport);
         console.log(`[Server] WebhookTransport enabled → ${webhookTransport.api.baseUrl}`);
     } else {
-        console.log("[Server] WebhookTransport disabled (set API_NOTIFY_URL + API_NOTIFY_TOKEN to enable).");
+        // No webhook → send notifier events straight to the terminal so nothing is lost.
+        transports.push(new ConsoleTransport());
+        console.log("[Server] WebhookTransport disabled — notifier events will print to console.");
     }
     const notifier = new Notifier({transports});
-    const restoreConsole = wrapConsoleForNotifier(notifier);
+    // Mirror console.* into the notifier only when a webhook consumes them. With the
+    // ConsoleTransport active, wrapping would double-print every console line.
+    const restoreConsole = webhookTransport.enabled ? wrapConsoleForNotifier(notifier) : () => {};
 
     const LICHESS_MAX_GAMES = parseInt(process.env.LICHESS_MAX_GAMES ?? "4", 10);
     const ENGINE_HARD_CAP = parseInt(process.env.ENGINE_HARD_CAP ?? String(LICHESS_MAX_GAMES + 3), 10);
@@ -162,12 +194,11 @@ if (import.meta.main) {
         if (!engineManager.hasCapacity()) {
             throw new EngineCapReached(engineManager.maxEngines, engineManager.count());
         }
-        return new UciEngine({
-            cmd: JEWKIEBOT_PATH,
-            notifier,
-            label,
-            bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin"),
-        });
+        // Delegate construction to the manager so per-game engines honour
+        // REMOTE_ENGINE_ENABLED (SshUciEngine vs local UciEngine) exactly like
+        // every other engine. Building a UciEngine directly here bypassed that
+        // and forced games to always run on the local box.
+        return engineManager.reserveEngine(label, JEWKIEBOT_PATH);
     };
 
     const isWindows = process.platform === "win32";

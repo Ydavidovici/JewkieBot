@@ -218,32 +218,39 @@ static void handle_eval(const std::string& line, Engine& engine) {
     std::cout.flush();
 }
 
+// Hard ceiling on iterative-deepening depth. Used whenever depth is left
+// unconstrained (`depth 0` or `infinite`); the time manager stops earlier.
+static constexpr int MAX_SEARCH_DEPTH = 64;
+
 static void handle_go(const std::string& line, Engine& engine) {
-    PlaySettings settings{};
-
-    settings.depth = 20;
-    settings.time_left_ms = 0;
-    settings.increment_ms = 0;
-    settings.moves_to_go = 0;
-
+    // Wire contract: the GUI always sends every field. A value of 0 means
+    // "unconstrained" for that field. We parse the raw values first, then apply
+    // that convention uniformly when building PlaySettings — so e.g. `depth 0`
+    // keeps a full-strength search instead of clamping deepening to depth 0.
     std::istringstream iss(line);
     std::string token;
 
+    int depth = 0, nodes = 0, movetime = 0;
     int wtime = 0, btime = 0, winc = 0, binc = 0, movestogo = 0;
-    int movetime = 0;
     bool infinite = false;
 
     while (iss >> token) {
         if (token == "go") continue;
-        if (token == "depth") iss >> settings.depth;
+        else if (token == "depth") iss >> depth;
+        else if (token == "nodes") iss >> nodes;
+        else if (token == "movetime") iss >> movetime;
         else if (token == "wtime") iss >> wtime;
         else if (token == "btime") iss >> btime;
         else if (token == "winc") iss >> winc;
         else if (token == "binc") iss >> binc;
         else if (token == "movestogo") iss >> movestogo;
-        else if (token == "movetime") iss >> movetime;
         else if (token == "infinite") infinite = true;
     }
+
+    // TODO: node-limited search isn't implemented yet; only `nodes 0`
+    // (unconstrained) is exercised today. Parsed here so the contract is
+    // explicit and honoring it later is a localized change.
+    (void)nodes;
 
     bool whiteToMove = true;
     std::string fen = engine.getFEN();
@@ -253,18 +260,26 @@ static void handle_go(const std::string& line, Engine& engine) {
         if (colorPart == "b") whiteToMove = false;
     }
 
+    PlaySettings settings{};
+
+    // depth 0 = unconstrained: search as deep as time allows, up to the ceiling.
+    settings.depth = (depth > 0) ? depth : MAX_SEARCH_DEPTH;
+
     if (movetime > 0) {
+        // Fixed time per move.
         settings.time_left_ms = movetime;
         settings.increment_ms = 0;
         settings.moves_to_go = 1;
     } else {
+        // Clock-based. A 0 clock field is unconstrained; the time manager falls
+        // back to a default budget (see Search::findBestMove).
         settings.time_left_ms = whiteToMove ? wtime : btime;
         settings.increment_ms = whiteToMove ? winc : binc;
         settings.moves_to_go = movestogo;
     }
 
     if (infinite) {
-        settings.depth = 64;
+        settings.depth = MAX_SEARCH_DEPTH;
         settings.time_left_ms = 0;
         settings.infinite = true;
     }

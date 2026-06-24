@@ -1,3 +1,36 @@
+import {EventEmitter} from "node:events"
+import {ApiTransport} from "../backend/src/apiTransport"
+
+// Minimal notifier capability the bot depends on — satisfied by the real
+// Notifier, nullNotifier, and lightweight test stubs alike.
+export interface NotifierClass {
+    info(subject: string, details?: unknown): void;
+    warn(subject: string, details?: unknown): void;
+    error(subject: string, details?: unknown): void;
+    fatal(subject: string, details?: unknown): void;
+}
+
+// Minimal engine capability the bot drives per game — satisfied by UciEngine,
+// SshUciEngine, and the test MockEngine. (The bot is handed one engine per
+// game, not the EngineManager pool.)
+export interface EngineManagerClass extends EventEmitter {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    uciNewGame(): Promise<void>;
+    setOption(name: string, value: string): Promise<void>;
+    position(fen: string, moves?: string[]): Promise<void>;
+    go(options: EngineGoOptions): Promise<{bestMove: string | null; scoreCp: number | null; isMate: boolean}>;
+}
+
+// Options accepted by LichessBot._lichessFetch (spread into ApiTransport.request).
+export interface LichessFetchOptions {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: BodyInit;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+}
+
 export interface SshConfig {
     user?: string;
     host: string;
@@ -49,4 +82,45 @@ export interface ApiHealthResponse {
     botRunning: boolean;
     activeGames: number;
     uptimeSec: number;
+}
+
+export interface LichessBotOptions {
+    maxConcurrentGames?: number;
+    maxRestarts?: number;
+    huntPollIntervalMs?: number;
+    restartDelayMs?: number;
+    commandTimeoutMs?: number;
+    reconnectDelayMs?: number;
+    notifier?: NotifierClass;
+    now?: any
+    huntAcceptTimeoutMs?: number
+    defaultRetryAfterSec?: number
+    rateLimitedUntil?: number;
+    apiTransport?: ApiTransport;
+    declineCooldownMs?: number;
+}
+
+export interface LichessAutoplayOptions {
+    limit?: number;
+    increment?: number;
+    rated?: boolean;
+    target?: number;
+    mode?: "near" | "weakest";
+    window?: number;
+    whiteOpeningId?: string | null;
+    blackOpeningId?: string | null;
+}
+
+// Resolved, running autoplay state stored on the bot (options + loop bookkeeping).
+export interface LichessAutoplayState {
+    limit: number;
+    increment: number;
+    rated: boolean;
+    target: number;
+    mode: "near" | "weakest";
+    window: number;
+    whiteOpeningId: string | null;
+    blackOpeningId: string | null;
+    timer: ReturnType<typeof setTimeout> | null;
+    huntInFlight: boolean;
 }

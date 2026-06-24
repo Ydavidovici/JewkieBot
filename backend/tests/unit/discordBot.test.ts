@@ -1,5 +1,5 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {HealthPinger, DiscordTransport} from "../src/discordBot.ts";
+import {HealthPinger, DiscordTransport} from "../../src/discordBot.ts";
 
 describe("HealthPinger", () => {
     let sendFnMock;

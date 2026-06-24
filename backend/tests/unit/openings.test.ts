@@ -1,8 +1,8 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LichessBot } from "../src/lichessBot.js";
-import { OPENINGS } from "../src/openings.js";
+import { LichessBot } from "../../src/lichessBot.ts";
+import { OPENINGS } from "../../src/openings.js";
 import { spawn } from "bun";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,7 +14,7 @@ describe("Opening Book Features", () => {
             // We use a fast, tiny URL (the repo's README) just to test the streaming logic
             // without downloading a 15MB file and spamming Github in CI tests.
             const fakeUrl = "https://raw.githubusercontent.com/gmcheems-org/free-opening-books/master/README.md";
-            const scriptPath = path.resolve(__dirname, "../src/scripts/downloadBook.js");
+            const scriptPath = path.resolve(__dirname, "../../src/scripts/downloadBook.js");
             
             const testOutPath = path.resolve(__dirname, "test-book-output.bin");
             const proc = spawn({

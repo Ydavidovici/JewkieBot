@@ -72,7 +72,7 @@ export class UciEngine extends EventEmitter {
         try {
             const cmdArray = Array.isArray(this.cmd) ? this.cmd : [this.cmd];
 
-            this.notifier.info(`[Engine] Spawning: ${cmdArray.join(" ")}\``);
+            this.notifier.info(`[Engine ${this.label}] Spawning: ${cmdArray.join(" ")}`);
 
             this.process = this.spawnFn({
                 cmd: cmdArray,
@@ -424,12 +424,17 @@ export class EngineManager {
                 keyPath: process.env.REMOTE_SSH_KEY_PATH,
                 stockfishPath: process.env.REMOTE_STOCKFISH_PATH,
             };
+            const target = sshConfig.user ? `${sshConfig.user}@${sshConfig.host}` : sshConfig.host;
+            this.notifier.info(`[EngineManager] Engine '${label}' → REMOTE via SSH (${target}:${sshConfig.stockfishPath})`);
             engine = new SshUciEngine(sshConfig, {
                 ...this.engineOptions,
                 notifier: this.notifier,
                 label,
             });
         } else {
+            // The most common "why is it running on my machine?" answer: the env
+            // flag is off, so we spawn the engine locally on this host.
+            this.notifier.info(`[EngineManager] Engine '${label}' → LOCAL on this host (${enginePath}) [REMOTE_ENGINE_ENABLED=${process.env.REMOTE_ENGINE_ENABLED ?? "unset"}]`);
             engine = new UciEngine({
                 ...this.engineOptions,
                 notifier: this.notifier,

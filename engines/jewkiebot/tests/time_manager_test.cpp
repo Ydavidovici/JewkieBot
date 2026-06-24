@@ -1,6 +1,8 @@
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 #include <thread>
 
 #include "../include/timeManager.h"
@@ -478,6 +480,84 @@ static void test_search_sudden_death_does_not_burn_clock() {
     std::cout << "PASS\n\n";
 }
 
+// =========== SECTION 10: Bullet flag-safety ===========
+//
+// These assert the allocator never overspends in bullet, the failure mode where
+// the bot "consistently runs out of time". They use getSoftAllocMs/getHardAllocMs
+// so they check the allocation directly (fast, deterministic) instead of sleeping.
+
+// Move 1 of a 1+0 bullet game (sudden death, no movestogo) must not budget a
+// multi-second think or let a single move's hard deadline eat a huge slice of
+// the 60s clock.
+static void test_bullet_1_0_allocations_are_flag_safe() {
+    std::cout << "--- test_bullet_1_0_allocations_are_flag_safe ---\n";
+    TimeManager tm;
+    tm.start(60000, 0, 0);  // 1+0, sudden death
+    const int64_t soft = tm.getSoftAllocMs();
+    const int64_t hard = tm.getHardAllocMs();
+    std::cout << "  soft=" << soft << "ms hard=" << hard << "ms\n";
+    REQUIRE_MSG(soft <= 1500,
+                "1+0 move-1 soft must be <= 1500ms (regression: was ~2000ms), got "
+                + std::to_string(soft));
+    REQUIRE_MSG(hard <= 6000,
+                "1+0 move-1 hard must be <= 6000ms (regression: was ~10000ms — 1/6 of the clock), got "
+                + std::to_string(hard));
+    std::cout << "PASS\n\n";
+}
+
+// Move 1 of a 2+1 bullet game. The increment is added on top of remaining/mtg,
+// so this is where over-allocation is worst.
+static void test_bullet_2_1_allocations_are_flag_safe() {
+    std::cout << "--- test_bullet_2_1_allocations_are_flag_safe ---\n";
+    TimeManager tm;
+    tm.start(120000, 1000, 0);  // 2+1
+    const int64_t soft = tm.getSoftAllocMs();
+    const int64_t hard = tm.getHardAllocMs();
+    std::cout << "  soft=" << soft << "ms hard=" << hard << "ms\n";
+    REQUIRE_MSG(soft <= 4500,
+                "2+1 move-1 soft must be <= 4500ms (regression: was ~5000ms), got "
+                + std::to_string(soft));
+    REQUIRE_MSG(hard <= 12500,
+                "2+1 move-1 hard must be <= 12500ms (regression: was ~25000ms — 1/5 of the clock), got "
+                + std::to_string(hard));
+    std::cout << "PASS\n\n";
+}
+
+// The allocator must always reserve a move-overhead buffer for network lag;
+// soft can never consume the entire remaining clock.
+static void test_move_overhead_is_reserved() {
+    std::cout << "--- test_move_overhead_is_reserved ---\n";
+    TimeManager tm;
+    tm.start(1000, 0, 0);
+    const int64_t soft = tm.getSoftAllocMs();
+    REQUIRE_MSG(soft <= 1000 - TimeManager::MOVE_OVERHEAD_MS,
+                "soft must leave MOVE_OVERHEAD reserved for lag, got soft=" + std::to_string(soft));
+    std::cout << "PASS\n\n";
+}
+
+// Worst-case full-game drain: a 1+0 bullet game where every move spends the
+// HARD budget (sharp, unstable positions) plus a fixed network lag. The engine
+// must survive a realistic bullet game length without flagging.
+static void test_full_game_bullet_worst_case_does_not_flag() {
+    std::cout << "--- test_full_game_bullet_worst_case_does_not_flag ---\n";
+    const int64_t LAG_MS = 100;    // typical Lichess round-trip overhead per move
+    const int MIN_MOVES = 40;      // ~80 plies — a realistic bullet game length
+    int64_t remaining = 60000;     // 1+0
+    TimeManager tm;
+    int move = 0;
+    for (; move < MIN_MOVES; ++move) {
+        tm.start(static_cast<uint64_t>(remaining), 0, 0);
+        const int64_t spent = tm.getHardAllocMs() + LAG_MS;  // worst case: search runs to hard
+        remaining -= spent;
+        if (remaining <= 0) break;
+    }
+    std::cout << "  survived " << move << " moves, " << remaining << "ms left\n";
+    REQUIRE_MSG(move >= MIN_MOVES && remaining > 0,
+                "1+0 worst-case (hard budget + 100ms lag) must survive >= 40 moves; "
+                "flagged at move " + std::to_string(move));
+    std::cout << "PASS\n\n";
+}
+
 int main() {
     std::cout << "========== SECTION 1: Immediate Timeout ==========\n\n";
     test_zero_time_zero_inc_is_immediately_up();
@@ -519,7 +599,13 @@ int main() {
     test_reset_to_long_budget();
     test_restart_clears_stability_state();
 
-    std::cout << "========== SECTION 8: Search Integration ==========\n\n";
+    std::cout << "========== SECTION 8: Bullet Flag-Safety ==========\n\n";
+    test_bullet_1_0_allocations_are_flag_safe();
+    test_bullet_2_1_allocations_are_flag_safe();
+    test_move_overhead_is_reserved();
+    test_full_game_bullet_worst_case_does_not_flag();
+
+    std::cout << "========== SECTION 9: Search Integration ==========\n\n";
     test_search_returns_within_time_budget();
     test_search_returns_within_tight_budget();
     test_search_returns_valid_move_when_budget_near_zero();
@@ -527,7 +613,7 @@ int main() {
     test_search_movestogo_restricts_time();
     test_search_sudden_death_does_not_burn_clock();
 
-    std::cout << "========== SECTION 9: Fixed Movetime ==========\n\n";
+    std::cout << "========== SECTION 10: Fixed Movetime ==========\n\n";
     test_startFixed_uses_full_budget();
     test_startFixed_tiny_budget_immediate();
     test_search_movetime_uses_full_budget();

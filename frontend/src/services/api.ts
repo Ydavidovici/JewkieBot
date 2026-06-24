@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const DEFAULT_BASE_URL = import.meta.env.API_URL ?? "http://45.55.161.47:8000";
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_URL ?? "http://192.168.1.51:8000";
 
 /**
  * Generic API Request Handler

@@ -11,7 +11,9 @@
       "Read(//usr/local/bin/**)",
       "Bash('/c/Users/Yaakov Davidovici/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin/cmake.exe' -S . -B build -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=RelWithDebInfo)",
       "PowerShell(claude doctor *)",
-      "PowerShell(bun test *)"
+      "PowerShell(bun test *)",
+      "WebSearch",
+      "PowerShell(git *)"
     ]
   }
 }

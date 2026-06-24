@@ -1,5 +1,5 @@
 import {describe, it, expect, beforeEach} from "bun:test";
-import {classifyMove, GameAnalyzer} from "../src/gameAnalyzer.js";
+import {classifyMove, GameAnalyzer} from "../../src/gameAnalyzer.js";
 
 function createTestDbClient() {
     return {

@@ -1,8 +1,18 @@
 import {expect, test, mock, describe, beforeEach, afterEach} from "bun:test";
-import {ApiTransport} from "../src/apiTransport.js";
+import type {Mock} from "bun:test";
+import {ApiTransport} from "../../src/apiTransport.js";
+
+// Installs a fetch mock as global.fetch. The cast through `typeof fetch`
+// satisfies the (preconnect-bearing) DOM signature, and the explicit Mock
+// type gives `.mock.calls[i]` a (url, opts) tuple so call assertions typecheck.
+function installFetch(impl: (url?: string, opts?: any) => Promise<any>): Mock<(url: string, opts?: any) => Promise<any>> {
+    const m = mock(impl) as unknown as Mock<(url: string, opts?: any) => Promise<any>>;
+    global.fetch = m as unknown as typeof fetch;
+    return m;
+}
 
 describe("ApiTransport", () => {
-    let originalFetch;
+    let originalFetch: typeof fetch;
 
     beforeEach(() => {
         originalFetch = global.fetch;
@@ -13,12 +23,11 @@ describe("ApiTransport", () => {
     });
 
     test("prepends baseUrl if endpoint is relative", async () => {
-        const fetchMock = mock(async () => ({
+        const fetchMock = installFetch(async () => ({
             ok: true,
             headers: new Headers(),
             text: async () => "ok"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport({ baseUrl: "https://api.example.com" });
         await api.get("/users");
@@ -28,12 +37,11 @@ describe("ApiTransport", () => {
     });
 
     test("does not prepend baseUrl if endpoint is absolute", async () => {
-        const fetchMock = mock(async () => ({
+        const fetchMock = installFetch(async () => ({
             ok: true,
             headers: new Headers(),
             text: async () => "ok"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport({ baseUrl: "https://api.example.com" });
         await api.get("http://other.com/data");
@@ -43,15 +51,14 @@ describe("ApiTransport", () => {
     });
 
     test("sets default headers and auth token", async () => {
-        const fetchMock = mock(async () => ({
+        const fetchMock = installFetch(async () => ({
             ok: true,
             headers: new Headers(),
             text: async () => "ok"
         }));
-        global.fetch = fetchMock;
 
-        const api = new ApiTransport({ 
-            baseUrl: "https://api.example.com", 
+        const api = new ApiTransport({
+            baseUrl: "https://api.example.com",
             token: "secret-token",
             defaultHeaders: { "X-Custom": "value" }
         });
@@ -64,12 +71,11 @@ describe("ApiTransport", () => {
     });
 
     test("automatically stringifies JSON objects and sets Content-Type", async () => {
-        const fetchMock = mock(async () => ({
+        const fetchMock = installFetch(async () => ({
             ok: true,
             headers: new Headers(),
             text: async () => "ok"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
         await api.post("http://test.com/post", { foo: "bar" });
@@ -81,12 +87,11 @@ describe("ApiTransport", () => {
     });
 
     test("automatically parses JSON response if content-type is json", async () => {
-        const fetchMock = mock(async () => ({
+        installFetch(async () => ({
             ok: true,
             headers: new Headers({ "content-type": "application/json; charset=utf-8" }),
             json: async () => ({ hello: "world" })
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
         const data = await api.get("http://test.com/json");
@@ -95,12 +100,11 @@ describe("ApiTransport", () => {
     });
 
     test("returns text if response is not JSON", async () => {
-        const fetchMock = mock(async () => ({
+        installFetch(async () => ({
             ok: true,
             headers: new Headers({ "content-type": "text/plain" }),
             text: async () => "plain text"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
         const data = await api.get("http://test.com/text");
@@ -109,25 +113,23 @@ describe("ApiTransport", () => {
     });
 
     test("throws an error if response is not ok", async () => {
-        const fetchMock = mock(async () => ({
+        installFetch(async () => ({
             ok: false,
             status: 404,
             headers: new Headers(),
             text: async () => "Not Found"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
-        
+
         expect(api.get("http://test.com/404")).rejects.toThrow("HTTP 404: Not Found");
     });
     test("does not stringify URLSearchParams and does not set Content-Type to JSON", async () => {
-        const fetchMock = mock(async () => ({
+        const fetchMock = installFetch(async () => ({
             ok: true,
             headers: new Headers(),
             text: async () => "ok"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
         const params = new URLSearchParams({ a: "1", b: "2" });
@@ -140,8 +142,7 @@ describe("ApiTransport", () => {
 
     test("returns raw response if rawResponse is true", async () => {
         const rawRes = { ok: true, isRaw: true };
-        const fetchMock = mock(async () => rawRes);
-        global.fetch = fetchMock;
+        installFetch(async () => rawRes);
 
         const api = new ApiTransport();
         const data = await api.get("http://test.com/raw", { rawResponse: true });
@@ -150,13 +151,12 @@ describe("ApiTransport", () => {
     });
 
     test("does not throw if throwOnError is false", async () => {
-        const fetchMock = mock(async () => ({
+        installFetch(async () => ({
             ok: false,
             status: 429,
             headers: new Headers(),
             text: async () => "Rate Limited"
         }));
-        global.fetch = fetchMock;
 
         const api = new ApiTransport();
         const data = await api.get("http://test.com/429", { throwOnError: false, rawResponse: true });

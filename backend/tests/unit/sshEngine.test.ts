@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
-import { SshUciEngine } from "../src/engineManager.ts";
-import { CutechessManager } from "../src/cutechessManager.js";
+import { SshUciEngine } from "../../src/engineManager.ts";
+import { CutechessManager } from "../../src/cutechessManager.js";
 
 describe("SSH Execution Wrappers", () => {
     describe("SshUciEngine", () => {

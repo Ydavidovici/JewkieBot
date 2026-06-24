@@ -1,5 +1,5 @@
 import {describe, it, expect, mock} from "bun:test";
-import {UciEngine, EngineManager} from "../src/engineManager.ts";
+import {UciEngine, EngineManager} from "../../src/engineManager.ts";
 
 const BUILD_PATH ="C:\\Users\\Owner\\Desktop\\DSS\\apps\\jewkiebot\\engines\\jewkiebot\\build\\jewkiebot.exe"
 
@@ -376,6 +376,41 @@ describe("UciEngine.stop()", () => {
         await tick(30);
         expect(spawnFn.processes).toHaveLength(1);
     });
+});
+
+describe("UciEngine.go() — real engine: 0 means unconstrained", () => {
+    // Black queen on a8 hangs to the white queen down the open a-file, and the
+    // white queen is safe — so Qxa8+ (a1a8) is the unique, decisively winning
+    // move (~+9). A depth-0 "search" (the regression) never enters the
+    // iterative-deepening loop and returns the first generated legal move
+    // instead — a passive shuffle that leaves the free queen on the board.
+    const FREE_QUEEN_FEN = "q5k1/8/8/8/8/8/8/Q5K1 w - - 0 1";
+
+    it("treats depth/movetime 0 as unconstrained and actually searches", async () => {
+        const engine = new UciEngine({cmd: BUILD_PATH});
+        await engine.start();
+        try {
+            await engine.uciNewGame();
+            await engine.position(FREE_QUEEN_FEN, []);
+
+            // Exactly the shape lichessBot.makeMove sends for a clock game:
+            // depth/nodes/moveTime all 0 (unconstrained), only the clock is set.
+            const {bestMove, scoreCp} = await engine.go({
+                depth: 0, nodes: 0, moveTime: 0,
+                whiteTime: 2000, blackTime: 2000,
+                whiteIncrement: 0, blackIncrement: 0,
+            });
+
+            // It grabbed the free queen — proof it searched past the immediate
+            // move list instead of returning a depth-0 first move.
+            expect(bestMove).toBe("a1a8");
+            // scoreCp is parsed from the `info ... score` stream, so a winning
+            // score also confirms the deepening loop actually ran.
+            expect(scoreCp).toBeGreaterThan(500);
+        } finally {
+            await engine.stop();
+        }
+    }, 15000);
 });
 
 describe("UciEngine — concurrent command queue", () => {
