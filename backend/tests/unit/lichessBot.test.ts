@@ -2137,6 +2137,37 @@ describe("huntWeakestBot — extra coverage", () => {
         expect(tried).toEqual(["Bot0", "Bot1"]);
     });
 
+    it("fills multiple slots when count > 1, and stops once they're full", async () => {
+        const bots = Array.from({length: 5}, (_, i) => ({
+            id: `b${i}`, username: `Bot${i}`, perfs: {blitz: {rating: 1000 + i * 10}},
+        }));
+        const challenged = [];
+        const b = new LichessBot("fake_token", () => engine, {huntPollIntervalMs: 1, huntAcceptTimeoutMs: 200});
+        b.botProfile = "self";
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/bot/online")) {
+                return {ok: true, body: createMockStream(bots)};
+            }
+            const m = url.match(/\/api\/challenge\/([^/]+)$/);
+            if (m) {
+                const id = "c" + m[1];
+                challenged.push(m[1]);
+                // Simulate the opponent accepting: the game appears in activeGames.
+                setTimeout(() => b.activeGames.add(id), 2);
+                return {ok: true, json: async () => ({id})};
+            }
+            if (url.includes("/cancel")) return {ok: true};
+            return {ok: false};
+        });
+
+        const result = await b.huntWeakestBot(60, 0, true, 3);
+        expect(result.status).toBe("success");
+        expect(result.started).toBe(3);
+        expect(result.gameIds).toHaveLength(3);
+        // Filled 3 slots from the 3 weakest, then stopped — didn't challenge all 5.
+        expect(challenged).toEqual(["Bot0", "Bot1", "Bot2"]);
+    });
+
     it("continues to next candidate when a challenge fetch THROWS (network)", async () => {
         const bots = [
             {id: "a", username: "A", perfs: {blitz: {rating: 1000}}},
@@ -2618,7 +2649,7 @@ describe("Lichess 429 rate-limit handling", () => {
         const b = makeBot();
         // The pool is shuffled, so we can't predict which bot trips it. Just
         // verify: after a 429, the loop stops (tried.length <= position of 429).
-        await expect(b.huntNearRating(180, 0, true, {maxAttempts: 3})).rejects.toBeInstanceOf(LichessRateLimited);
+        await expect(b.huntNearRating(180, 0, true, {count: 3})).rejects.toBeInstanceOf(LichessRateLimited);
         expect(tried.length).toBeLessThanOrEqual(3);
         // No bot should be in cool-down (we either accepted them, or got 429).
         expect(b.recentlyDeclined.size).toBe(0);
@@ -2969,8 +3000,8 @@ describe("Daily bot-vs-bot games limit (429)", () => {
     });
 });
 
-describe("huntNearRating — maxAttempts default", () => {
-    it("challenges at most 2 candidates per hunt by default", async () => {
+describe("huntNearRating — count default", () => {
+    it("challenges at most one candidate per hunt by default", async () => {
         const b = new LichessBot("fake_token", () => engine, {
             huntPollIntervalMs: 1,
             huntAcceptTimeoutMs: 10,

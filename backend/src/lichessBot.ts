@@ -93,7 +93,7 @@ export class LichessBot {
     constructor(token, engineFactory, options: LichessBotOptions = {}) {
         this.token = token;
         this.engineFactory = engineFactory;
-        this.maxConcurrentGames = options.maxConcurrentGames ?? 4;
+        this.maxConcurrentGames = options.maxConcurrentGames ?? 5;
         this.huntPollIntervalMs = options.huntPollIntervalMs ?? 1000;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 5000;
         this.notifier = options.notifier ?? new Notifier() ?? nullNotifier;
@@ -205,9 +205,12 @@ export class LichessBot {
 
         const {limit, increment, rated, mode, window} = this.autoplay;
 
+        // Fill every open slot this tick instead of one game at a time.
+        const slots = Math.max(1, this.autoplay.target - this.activeGames.size);
+
         const huntPromise = mode === "weakest"
-            ? this.huntWeakestBot(limit, increment, rated)
-            : this.huntNearRating(limit, increment, rated, {window});
+            ? this.huntWeakestBot(limit, increment, rated, slots)
+            : this.huntNearRating(limit, increment, rated, {window, count: slots});
 
         huntPromise
         .catch(err => {
@@ -928,23 +931,26 @@ export class LichessBot {
         return {id, target};
     }
 
-    // Challenge candidates sequentially, waiting up to huntAcceptTimeoutMs for
-    // each to accept. Ensures at most one challenge is active/pending at a time.
-    // Returns the winning {id, target} or null if nobody accepted. Cancels
-    // any non-winners and marks them declined. Throws LichessRateLimited on first 429.
-    async _raceChallenges(candidates, limit, increment, rated) {
-        const challengedCandidates = [];
-        let winner = null;
+    // Challenge candidates in order, waiting up to huntAcceptTimeoutMs for each to
+    // accept, until `slots` games have started or we run out of candidates. Only
+    // one challenge is pending at a time, so we never overshoot the open slots.
+    // Returns an array of the winning {id, target} (0..slots). Cancels and
+    // cool-downs candidates that ignored us; throws LichessRateLimited on the
+    // first 429 (without penalising any bot, since a rate limit isn't their fault).
+    async _raceChallenges(candidates, limit, increment, rated, slots = 1) {
+        const pending = [];   // posted {id, target} challenges not yet won
+        const winners = [];
 
         try {
             for (const target of candidates) {
+                if (winners.length >= slots) break;
                 if (this._isRateLimited()) {
                     throw new LichessRateLimited(this._rateLimitRemainingSec());
                 }
 
-                let acceptedChallenge = null;
+                let challenge = null;
                 try {
-                    acceptedChallenge = await this._postOneChallenge(target, limit, increment, rated);
+                    challenge = await this._postOneChallenge(target, limit, increment, rated);
                 } catch (err) {
                     if (err instanceof LichessRateLimited) {
                         throw err;
@@ -953,45 +959,44 @@ export class LichessBot {
                     continue;
                 }
 
-                if (!acceptedChallenge) {
+                if (!challenge) {
                     continue;
                 }
 
-                challengedCandidates.push(acceptedChallenge);
+                pending.push(challenge);
 
-                // Wait up to huntAcceptTimeoutMs for this specific challenge to be accepted
+                // Wait up to huntAcceptTimeoutMs for this specific challenge to be accepted.
                 const deadline = this._now() + this.huntAcceptTimeoutMs;
                 let accepted = false;
                 while (this._now() < deadline) {
                     await new Promise(r => setTimeout(r, this.huntPollIntervalMs));
-                    if (this.activeGames.has(acceptedChallenge.id)) {
+                    if (this.activeGames.has(challenge.id)) {
                         accepted = true;
                         break;
                     }
                 }
 
                 if (accepted) {
-                    winner = acceptedChallenge;
-                    break;
+                    winners.push(challenge);
                 } else {
-                    // Timeout for this candidate. Cancel the challenge so we can try the next one.
-                    await this.cancelChallenge(acceptedChallenge.id);
+                    // Ignored within the window — cancel so we can try the next one.
+                    await this.cancelChallenge(challenge.id);
                 }
             }
         } catch (err) {
-            // Cancel all challenges that were created during this hunt
-            await Promise.allSettled(challengedCandidates.map(({id}) => this.cancelChallenge(id)));
+            // Cancel everything we posted that didn't become a game; don't mark any
+            // bot declined — a rate-limit abort isn't a snub.
+            const toCancel = pending.filter(p => !winners.includes(p));
+            await Promise.allSettled(toCancel.map(({id}) => this.cancelChallenge(id)));
             throw err;
         }
 
-        // If there was no winner, mark all challenged candidates as declined
-        if (!winner) {
-            for (const {target} of challengedCandidates) {
-                this._markDeclined(target.username);
-            }
+        // Hunt completed normally: cool-down the bots we challenged that never accepted.
+        for (const {target} of pending.filter(p => !winners.includes(p))) {
+            this._markDeclined(target.username);
         }
 
-        return winner;
+        return winners;
     }
 
     // Pick a Lichess perf name (bullet/blitz/rapid/classical) from a time control.
@@ -1016,10 +1021,10 @@ export class LichessBot {
         return {rating, prov: !!profile.perfs[perf].prov};
     }
 
-    // Challenge bots within ±window of our own rating for the given TC. Tries
-    // up to `maxAttempts` candidates, ordered by closeness in rating; returns
-    // the first one that accepts within ~5s.
-    async huntNearRating(limit, increment, rated = true, {window = 200, maxAttempts = 1, poolSize = 80, maxWindow = 2000} = {}) {
+    // Challenge bots within ±window of our own rating for the given TC, ordered
+    // by closeness in rating, until `count` games have started. `count` is how
+    // many open slots autoplay wants filled (1 for a manual one-off challenge).
+    async huntNearRating(limit, increment, rated = true, {window = 200, count = 1, poolSize = 80, maxWindow = 2000} = {}) {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
         }
@@ -1072,7 +1077,7 @@ export class LichessBot {
             const j = Math.floor(Math.random() * (i + 1));
             [pool[i], pool[j]] = [pool[j], pool[i]];
         }
-        const candidates = pool.slice(0, maxAttempts);
+        const candidates = pool.slice(0, count);
 
         if (candidates.length === 0) {
             const reason = filteredOut > 0
@@ -1082,25 +1087,29 @@ export class LichessBot {
         }
 
         const widenedNote = currentWindow !== widenedFrom ? ` (widened ±${widenedFrom}→±${currentWindow})` : "";
-        this.notifier.info(`[Hunt] ${candidates.length} candidates from pool of ${pool.length}${widenedNote}; challenging sequentially`);
+        this.notifier.info(`[Hunt] ${candidates.length} candidates from pool of ${pool.length}${widenedNote}; filling up to ${count} slot(s)`);
         for (const c of candidates) {
             this.notifier.info(`[Hunt]   ${c.username} (${perf}=${c.perfs[perf].rating}, Δ${c._delta})`);
         }
 
-        const winner = await this._raceChallenges(candidates, limit, increment, rated);
-        if (winner) {
-            const r = winner.target.perfs[perf].rating;
-            return {status: "success", message: `Playing vs ${winner.target.username} (${r})`, gameId: winner.id, myRating, targetRating: r};
+        const winners = await this._raceChallenges(candidates, limit, increment, rated, count);
+        if (winners.length > 0) {
+            if (count === 1) {
+                const w = winners[0];
+                const r = w.target.perfs[perf].rating;
+                return {status: "success", message: `Playing vs ${w.target.username} (${r})`, gameId: w.id, myRating, targetRating: r};
+            }
+            return {status: "success", message: `Started ${winners.length} game(s)`, started: winners.length, gameIds: winners.map(w => w.id), myRating};
         }
 
         throw new Error(`Hunt failed — none of ${candidates.length} near-rating bots accepted`);
     }
 
-    async huntWeakestBot(limit, increment, rated = true) {
+    async huntWeakestBot(limit, increment, rated = true, count = 1) {
         if (this._isRateLimited()) {
             throw new LichessRateLimited(this._rateLimitRemainingSec());
         }
-        this.notifier.info(`Hunting weakest bot (${limit}+${increment}, ${rated ? "rated" : "casual"})...`);
+        this.notifier.info(`Hunting weakest bots (${limit}+${increment}, ${rated ? "rated" : "casual"}, up to ${count})...`);
 
         const bots = await this._fetchOnlineBots(500);
 
@@ -1111,10 +1120,12 @@ export class LichessBot {
         .filter(b => b.perfs?.blitz?.rating != null);
 
         const filteredOut = eligible.filter(b => this._inDeclineCooldown(b.username)).length;
+        // One spare beyond the slots we want to fill, so a single ignoring bot
+        // doesn't waste the hunt.
         const candidates = eligible
         .filter(b => !this._inDeclineCooldown(b.username))
         .sort((a, b) => a.perfs.blitz.rating - b.perfs.blitz.rating)
-        .slice(0, 2);
+        .slice(0, count + 1);
 
         if (filteredOut > 0) {
             this.notifier.info(`[Hunt] Skipped ${filteredOut} bot(s) in decline cool-down`);
@@ -1122,10 +1133,13 @@ export class LichessBot {
 
         if (candidates.length === 0) throw new Error("No candidates found");
 
-        this.notifier.info(`[Hunt] ${candidates.length} weakest candidates; challenging sequentially`);
-        const winner = await this._raceChallenges(candidates, limit, increment, rated);
-        if (winner) {
-            return {status: "success", message: `Playing vs ${winner.target.username}`, gameId: winner.id};
+        this.notifier.info(`[Hunt] ${candidates.length} weakest candidates; filling up to ${count} slot(s)`);
+        const winners = await this._raceChallenges(candidates, limit, increment, rated, count);
+        if (winners.length > 0) {
+            if (count === 1) {
+                return {status: "success", message: `Playing vs ${winners[0].target.username}`, gameId: winners[0].id};
+            }
+            return {status: "success", message: `Started ${winners.length} game(s)`, started: winners.length, gameIds: winners.map(w => w.id)};
         }
 
         throw new Error("Hunt failed — all candidates ignored our challenges.");

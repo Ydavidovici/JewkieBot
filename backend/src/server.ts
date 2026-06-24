@@ -16,7 +16,7 @@ import {TasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
 import {LichessController} from "./controllers/lichessController.ts";
 
-export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 4, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
+export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 5, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
     const app = express();
 
     const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
@@ -175,7 +175,7 @@ if (import.meta.main) {
     // ConsoleTransport active, wrapping would double-print every console line.
     const restoreConsole = webhookTransport.enabled ? wrapConsoleForNotifier(notifier) : () => {};
 
-    const LICHESS_MAX_GAMES = parseInt(process.env.LICHESS_MAX_GAMES ?? "4", 10);
+    const LICHESS_MAX_GAMES = parseInt(process.env.LICHESS_MAX_GAMES ?? "5", 10);
     const ENGINE_HARD_CAP = parseInt(process.env.ENGINE_HARD_CAP ?? String(LICHESS_MAX_GAMES + 3), 10);
 
     const engineManager = new EngineManager({
