@@ -1402,7 +1402,10 @@ export class LichessBot {
     }
 
     // Normalize an arena or swiss tournament into one shape for the UI + hunting.
-    _normalizeTournament(t, type) {
+    // `team` is the team whose listing it came from, so the UI can link to it.
+    _normalizeTournament(t, type, team = {}) {
+        const teamId = team?.id ?? (typeof team === "string" ? team : null);
+        const teamName = team?.name ?? teamId;
         if (type === "arena") {
             return {
                 id: t.id, type: "arena", name: t.fullName ?? t.id,
@@ -1410,6 +1413,7 @@ export class LichessBot {
                 status: t.status === 10 ? "created" : t.status === 20 ? "started" : "finished",
                 variant: t.variant?.key ?? "standard",
                 nbPlayers: t.nbPlayers ?? 0,
+                teamId, teamName,
             };
         }
         return {
@@ -1418,6 +1422,7 @@ export class LichessBot {
             status: t.status ?? "created",
             variant: (typeof t.variant === "string" ? t.variant : t.variant?.key) ?? "standard",
             nbPlayers: t.nbPlayers ?? 0,
+            teamId, teamName,
         };
     }
 
@@ -1439,10 +1444,12 @@ export class LichessBot {
         }
     }
 
-    // Snapshot for the frontend: everything found, soonest first, each flagged
-    // joined (and "playing" when joined and currently running).
+    // Snapshot for the frontend: upcoming/ongoing tournaments only (finished ones
+    // are dropped), soonest first, each flagged joined (and "playing" when joined
+    // and currently running).
     getTournaments() {
         return [...this.tournaments.values()]
+            .filter(t => t.status !== "finished")
             .sort((a, b) => (a.startsAt ?? 0) - (b.startsAt ?? 0))
             .map(({seenAt, ...t}) => ({...t, playing: !!t.joined && t.status === "started"}));
     }
@@ -1482,7 +1489,7 @@ export class LichessBot {
                     for (const t of list) {
                         if (!t?.id || seen.has(t.id)) continue;
                         seen.add(t.id);
-                        found.push(this._normalizeTournament(t, kind));
+                        found.push(this._normalizeTournament(t, kind, team));
                     }
                 } catch (err) {
                     if (err instanceof LichessRateLimited) throw err;
