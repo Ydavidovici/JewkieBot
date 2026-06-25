@@ -98,6 +98,7 @@ export class LichessBot {
     savedPlies: Map<string, number>
     gameOpenings: Map<string, any>
     joinedTournaments: Set<string>
+    tournaments: Map<string, any>
 
     // Always present, but null is a real state until set later.
     botProfile: string | null
@@ -160,6 +161,9 @@ export class LichessBot {
         this.savedPlies = new Map();
         this.gameOpenings = new Map();
         this.joinedTournaments = new Set();
+        // Everything we've discovered (arena + swiss across the bot's teams),
+        // keyed by id, surfaced to the frontend via the lichess status.
+        this.tournaments = new Map();
 
         // Autoplay: when enabled, the bot fills free slots via huntWeakestBot.
         this.autoplay = null; // {limit, increment, rated, target, ...openings, timer, huntInFlight}
@@ -1324,27 +1328,32 @@ export class LichessBot {
         return res.json();
     }
 
-    // Arenas created by a team, as an ndjson stream. Same body-read guard as
-    // _fetchOnlineBots so a stalled connection can't hang the whole hunt.
-    async fetchTeamArenas(teamId, max = 10) {
-        const res = await this._lichessFetch(`https://lichess.org/api/team/${teamId}/arena?max=${max}`, {
+    // Tournaments a team runs (kind = "arena" | "swiss"), as an ndjson stream.
+    // Same body-read guard as _fetchOnlineBots so a stalled connection can't hang
+    // the whole hunt.
+    async _streamTeamTournaments(teamId, kind, max = 30) {
+        const res = await this._lichessFetch(`https://lichess.org/api/team/${teamId}/${kind}?max=${max}`, {
             headers: {Accept: "application/x-ndjson"},
         });
-        if (!res.ok) throw new Error(`Failed to fetch arenas for team ${teamId}: HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`Failed to fetch ${kind} for team ${teamId}: HTTP ${res.status}`);
 
-        const arenas = [];
+        const out = [];
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(new Error("Team-arena stream timed out")), 15000);
+        const timeoutId = setTimeout(() => controller.abort(new Error(`Team-${kind} stream timed out`)), 15000);
         try {
-            await this.readNdjsonStream(res.body, controller.signal, (t) => arenas.push(t));
+            await this.readNdjsonStream(res.body, controller.signal, (t) => out.push(t));
         } finally {
             clearTimeout(timeoutId);
         }
         if (controller.signal.aborted) {
-            throw new Error(`Timed out streaming arenas for team ${teamId}`);
+            throw new Error(`Timed out streaming ${kind} for team ${teamId}`);
         }
-        return arenas;
+        return out;
     }
+
+    fetchTeamArenas(teamId, max = 30) { return this._streamTeamTournaments(teamId, "arena", max); }
+
+    fetchTeamSwiss(teamId, max = 30) { return this._streamTeamTournaments(teamId, "swiss", max); }
 
     // Ask Lichess whether our account satisfies an arena's entry conditions
     // (rating caps, min rated games, etc.) before we burn a join attempt.
@@ -1376,6 +1385,68 @@ export class LichessBot {
         }
     }
 
+    async joinSwiss(swissId) {
+        const res = await this._lichessFetch(`https://lichess.org/api/swiss/${swissId}/join`, {
+            method: "POST",
+            headers: this.authHeader,
+        });
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText);
+        }
+        try {
+            return await res.json();
+        } catch {
+            return { ok: true };
+        }
+    }
+
+    // Normalize an arena or swiss tournament into one shape for the UI + hunting.
+    _normalizeTournament(t, type) {
+        if (type === "arena") {
+            return {
+                id: t.id, type: "arena", name: t.fullName ?? t.id,
+                startsAt: t.startsAt ?? 0,
+                status: t.status === 10 ? "created" : t.status === 20 ? "started" : "finished",
+                variant: t.variant?.key ?? "standard",
+                nbPlayers: t.nbPlayers ?? 0,
+            };
+        }
+        return {
+            id: t.id, type: "swiss", name: t.name ?? t.id,
+            startsAt: t.startsAt ? new Date(t.startsAt).getTime() : 0,
+            status: t.status ?? "created",
+            variant: (typeof t.variant === "string" ? t.variant : t.variant?.key) ?? "standard",
+            nbPlayers: t.nbPlayers ?? 0,
+        };
+    }
+
+    // Upsert discovered tournaments into the tracked map; prune finished/stale.
+    _recordTournaments(list) {
+        const now = this._now();
+        for (const t of list) {
+            const existing = this.tournaments.get(t.id);
+            this.tournaments.set(t.id, {
+                ...t,
+                joined: existing?.joined || this.joinedTournaments.has(t.id),
+                seenAt: now,
+            });
+        }
+        for (const [id, t] of this.tournaments) {
+            const stale = (t.status === "finished" && now - (t.seenAt ?? 0) > 60 * 60 * 1000)
+                || now - (t.seenAt ?? 0) > 24 * 60 * 60 * 1000;
+            if (stale) this.tournaments.delete(id);
+        }
+    }
+
+    // Snapshot for the frontend: everything found, soonest first, each flagged
+    // joined (and "playing" when joined and currently running).
+    getTournaments() {
+        return [...this.tournaments.values()]
+            .sort((a, b) => (a.startsAt ?? 0) - (b.startsAt ?? 0))
+            .map(({seenAt, ...t}) => ({...t, playing: !!t.joined && t.status === "started"}));
+    }
+
     async huntTournaments(slots) {
         this.notifier.info(`[Hunt] Hunting for tournaments to fill ${slots} slot(s)...`);
 
@@ -1394,72 +1465,82 @@ export class LichessBot {
         }
 
         if (!teams || teams.length === 0) {
-            this.notifier.info("[Hunt] Bot is in no teams — no bot-eligible tournaments. Join a bot-friendly team (e.g. 'lichess-bots').");
+            this.notifier.info("[Hunt] Bot is in no teams — join teams that run bot tournaments (e.g. a daily arena/swiss team).");
             return;
         }
 
-        // Collect upcoming/ongoing standard arenas across every team the bot is
-        // in. status 10 = created (upcoming), 20 = started (ongoing); 30 = finished.
-        const candidates = [];
+        // Widen the net: every arena AND swiss across every team the bot is in.
+        const found = [];
         const seen = new Set();
         for (const team of teams) {
             const teamId = team?.id ?? team;
             if (!teamId) continue;
 
-            let arenas;
-            try {
-                arenas = await this.fetchTeamArenas(teamId);
-            } catch (err) {
-                if (err instanceof LichessRateLimited) throw err;
-                this.notifier.warn(`[Hunt] Could not fetch arenas for team ${teamId}: ${err.message}`);
-                continue;
-            }
-
-            for (const t of arenas) {
-                if (!t?.id || seen.has(t.id)) continue;
-                seen.add(t.id);
-                if (t.status !== 10 && t.status !== 20) continue;
-                if (t.variant && t.variant.key !== "standard") continue;
-                if (this.joinedTournaments.has(t.id)) continue;
-                candidates.push(t);
+            for (const kind of ["arena", "swiss"]) {
+                try {
+                    const list = await this._streamTeamTournaments(teamId, kind);
+                    for (const t of list) {
+                        if (!t?.id || seen.has(t.id)) continue;
+                        seen.add(t.id);
+                        found.push(this._normalizeTournament(t, kind));
+                    }
+                } catch (err) {
+                    if (err instanceof LichessRateLimited) throw err;
+                    this.notifier.warn(`[Hunt] Could not fetch ${kind} for team ${teamId}: ${err.message}`);
+                }
             }
         }
 
-        if (candidates.length === 0) {
-            this.notifier.info("[Hunt] No upcoming/ongoing standard team arenas to join right now");
+        // Record everything so the frontend can show found / joined / playing.
+        this._recordTournaments(found);
+
+        // Joinable = upcoming or ongoing, standard, not already joined; soonest first.
+        const joinable = found
+            .filter(t => t.status === "created" || t.status === "started")
+            .filter(t => t.variant === "standard")
+            .filter(t => !this.joinedTournaments.has(t.id))
+            .sort((a, b) => a.startsAt - b.startsAt);
+
+        if (joinable.length === 0) {
+            this.notifier.info(`[Hunt] Found ${found.length} tournament(s); none joinable right now`);
             return;
         }
 
-        // Soonest first, so we fill slots with arenas that are live or imminent.
-        candidates.sort((a, b) => (a.startsAt ?? 0) - (b.startsAt ?? 0));
+        this.notifier.info(`[Hunt] ${joinable.length} joinable tournament(s); joining the soonest ${Math.min(slots, joinable.length)}`);
 
         let joined = 0;
-        for (const t of candidates) {
+        for (const t of joinable) {
             if (joined >= slots) break;
 
-            let eligible = true;
-            try {
-                eligible = await this.isEligibleForTournament(t.id);
-            } catch (err) {
-                if (err instanceof LichessRateLimited) throw err;
-                // Couldn't read the verdict — let the join attempt be the arbiter.
-            }
-            if (!eligible) {
-                this.notifier.info(`[Hunt] Skipping ${t.id} (${t.fullName}) — bot not eligible`);
-                this.joinedTournaments.add(t.id);
-                continue;
+            // Arenas expose entry verdicts; check before burning a join. Swiss we
+            // just attempt (the join response is the arbiter).
+            if (t.type === "arena") {
+                let eligible = true;
+                try {
+                    eligible = await this.isEligibleForTournament(t.id);
+                } catch (err) {
+                    if (err instanceof LichessRateLimited) throw err;
+                }
+                if (!eligible) {
+                    this.notifier.info(`[Hunt] Skipping ${t.id} (${t.name}) — bot not eligible`);
+                    this.joinedTournaments.add(t.id);
+                    continue;
+                }
             }
 
             try {
-                this.notifier.info(`[Hunt] Attempting to join tournament ${t.id} (${t.fullName})...`);
-                await this.joinTournament(t.id);
-                this.notifier.info(`[Hunt] Successfully joined tournament ${t.id}`);
+                this.notifier.info(`[Hunt] Joining ${t.type} ${t.id} (${t.name})...`);
+                if (t.type === "swiss") await this.joinSwiss(t.id);
+                else await this.joinTournament(t.id);
+                this.notifier.info(`[Hunt] Joined ${t.id}`);
                 this.joinedTournaments.add(t.id);
+                const tracked = this.tournaments.get(t.id);
+                if (tracked) tracked.joined = true;
                 joined++;
             } catch (err) {
                 if (err instanceof LichessRateLimited) throw err;
-                this.notifier.warn(`[Hunt] Failed to join tournament ${t.id}: ${err.message}`);
-                this.joinedTournaments.add(t.id); // add so we don't spam it
+                this.notifier.warn(`[Hunt] Failed to join ${t.id}: ${err.message}`);
+                this.joinedTournaments.add(t.id);
             }
         }
     }

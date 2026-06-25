@@ -43,6 +43,7 @@ class FakeBot {
     stop() { this.rec("stop", []); }
     _rateLimitRemainingSec() { return 0; }
     _maxBotGamesRemainingSec() { return 0; }
+    getTournaments() { return []; }
     _ensureProfile() { return Promise.resolve(); }
 
     async createOpenChallenge(...args: any[]) {

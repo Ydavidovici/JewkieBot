@@ -13,6 +13,7 @@ class MockLichessBot { [key: string]: any;
         this.recentlyDeclined = new Map();
         this._rateLimitRemainingSec = mock(() => 0);
         this._maxBotGamesRemainingSec = mock(() => 0);
+        this.getTournaments = mock(() => []);
         this._ensureProfile = mock(async () => true);
         mockBotInstances.push(this);
 
@@ -377,6 +378,7 @@ describe("GET /api/lichess/status", () => {
             maxConcurrentGames: 4,
             rateLimitedFor: 0,
             maxBotGamesFor: 0,
+            tournaments: [],
             declinedCount: 0,
         });
     });

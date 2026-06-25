@@ -5,13 +5,27 @@ import {
     createOpenChallenge, createAiChallenge, challengeWeakestBot,
     startAutoplay, stopAutoplay, getOpenings
 } from "../services/api.js";
-import { Play, Square, Swords, Bot, Globe, Target, Flame } from "lucide-react";
+import { Play, Square, Swords, Bot, Globe, Target, Flame, Trophy } from "lucide-react";
+
+// Relative "when" label for a tournament's start.
+const tournamentWhen = (t) => {
+    if (t.status === "started") return "live now";
+    if (t.status === "finished") return "finished";
+    const ms = (t.startsAt || 0) - Date.now();
+    if (ms <= 0) return "starting";
+    const m = Math.round(ms / 60000);
+    if (m < 60) return `in ${m}m`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `in ${h}h`;
+    return `in ${Math.round(h / 24)}d`;
+};
 
 export default function LichessPage() {
     const { activeUrl, activeStatus, refreshActive } = useBot();
     const isRunning = activeStatus?.lichess?.running;
     const botProfile = activeStatus?.lichess?.profile;
     const activeGames = activeStatus?.lichess?.activeGames || [];
+    const tournaments = activeStatus?.lichess?.tournaments || [];
 
     const [token, setToken] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
@@ -123,6 +137,36 @@ export default function LichessPage() {
                 </div>
                 {statusMessage && <p className="mt-4 text-sm text-blue-400 font-medium">{statusMessage}</p>}
                 {error && <p className="mt-4 text-sm text-red-400 font-medium flex items-center gap-2"><Target size={16} /> {error}</p>}
+            </div>
+
+            {/* Tournaments — everything the bot has found / joined / is playing */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <Trophy size={20} className="text-yellow-400" /> Tournaments
+                    <span className="text-sm text-slate-500 font-normal">({tournaments.length} found · {tournaments.filter(t => t.joined).length} joined)</span>
+                </h2>
+                {tournaments.length === 0 ? (
+                    <p className="text-slate-500 text-sm italic">None discovered yet — the bot scans its teams' arenas &amp; swiss on each autoplay tick. Join a daily-tournament team with the bot to populate this.</p>
+                ) : (
+                    <div className="flex flex-col gap-1 max-h-72 overflow-auto">
+                        {tournaments.map(t => (
+                            <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-950 border border-slate-800">
+                                <div className="min-w-0">
+                                    <div className="text-sm text-slate-200 truncate flex items-center gap-2">
+                                        {t.name}
+                                        <span className="text-[10px] uppercase tracking-wide text-slate-500 border border-slate-700 rounded px-1">{t.type}</span>
+                                    </div>
+                                    <div className="text-xs text-slate-500">{tournamentWhen(t)} · {t.nbPlayers ?? 0} players</div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {t.playing && <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/30 rounded-full px-2 py-0.5 animate-pulse">PLAYING</span>}
+                                    {!t.playing && t.joined && <span className="text-[10px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/30 rounded-full px-2 py-0.5">JOINED</span>}
+                                    <span className={`text-[10px] font-bold uppercase ${t.status === "started" ? "text-green-400" : t.status === "created" ? "text-yellow-400" : "text-slate-500"}`}>{t.status}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Actions Grid */}

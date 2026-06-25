@@ -75,6 +75,7 @@ export class LichessController {
             rateLimitedFor,
             maxBotGamesFor,
             declinedCount: this.lichessBotInstance ? this.lichessBotInstance.recentlyDeclined.size : 0,
+            tournaments: this.lichessBotInstance ? this.lichessBotInstance.getTournaments() : [],
         });
     };
 
