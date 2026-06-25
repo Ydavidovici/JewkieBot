@@ -41,7 +41,7 @@ export interface SelfPlayVersion {
 }
 
 export function defaultRemoteConfig(env = process.env): RemoteConfig {
-    const repoDir = env.REMOTE_REPO_DIR ?? "~/dss/apps/jewkiebot";
+    const repoDir = env.REMOTE_REPO_DIR ?? "$HOME/dss/apps/jewkiebot";
     return {
         repoDir,
         cutechess: env.REMOTE_CUTECHESS ?? "cutechess-cli",
