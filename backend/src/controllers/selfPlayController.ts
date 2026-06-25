@@ -49,6 +49,42 @@ export function defaultRemoteConfig(env = process.env): RemoteConfig {
     };
 }
 
+// Paths may use `~` or `$HOME` (docker env files don't expand them, and once a
+// path is quoted into an SSH command the remote shell won't either). Substitute
+// a known absolute home so cutechess receives real paths.
+export function substituteHome(p: string | null, home: string): string | null {
+    if (!p || !home) return p;
+    if (p === "~") return home;
+    if (p.startsWith("~/")) return home + p.slice(1);
+    return p.replace(/\$\{HOME\}|\$HOME/g, home);
+}
+
+function pathNeedsHome(p: string | null): boolean {
+    return !!p && (p.startsWith("~") || p.includes("$HOME"));
+}
+
+// Resolve `~`/`$HOME` in a RemoteConfig against the remote account's actual home
+// (queried once over SSH). No-op when the paths are already absolute.
+export async function absolutizeConfig(target: SshTarget, cfg: RemoteConfig, spawnFn: any = spawn): Promise<RemoteConfig> {
+    if (!pathNeedsHome(cfg.repoDir) && !pathNeedsHome(cfg.openingBook)) return cfg;
+
+    let home = "";
+    try {
+        const proc = spawnFn({cmd: sshArgs(target, 'printf %s "$HOME"'), stdout: "pipe", stderr: "pipe"});
+        home = (await new Response(proc.stdout).text()).trim();
+        await proc.exited;
+    } catch (_) {
+        return cfg; // best effort — fall back to the configured value
+    }
+    if (!home) return cfg;
+
+    return {
+        repoDir: substituteHome(cfg.repoDir, home)!,
+        cutechess: cfg.cutechess,
+        openingBook: substituteHome(cfg.openingBook, home),
+    };
+}
+
 // SSH target from the same env the rest of the app uses. null when remote
 // execution isn't configured, so the controller can refuse to run locally.
 export function sshTargetFromEnv(env = process.env): SshTarget | null {
@@ -224,6 +260,7 @@ export class SelfPlayController {
     private runs = new Map<string, RunState>();
     private spawnFn: any;
     private cfg: RemoteConfig;
+    private _cfgResolved = false;
 
     constructor(
         private taskManager: any,
@@ -262,6 +299,12 @@ export class SelfPlayController {
         // remote shell (see isValidVersion). Never run on unvalidated input.
         if (!isValidVersion(v1) || !isValidVersion(v2)) {
             return res.status(400).json({error: "Invalid version. Use 'current' or a release tag (letters, digits, '.', '-', '_' only)."});
+        }
+
+        // Resolve ~/$HOME in the configured paths against the remote home (once).
+        if (!this._cfgResolved) {
+            this.cfg = await absolutizeConfig(target, this.cfg, this.spawnFn);
+            this._cfgResolved = true;
         }
 
         const taskId = `selfplay-${Date.now()}`;

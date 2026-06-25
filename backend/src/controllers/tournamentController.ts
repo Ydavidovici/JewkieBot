@@ -1,6 +1,6 @@
 import {CutechessManager} from "../cutechessManager.js";
 import {spawn} from "bun";
-import {sshTargetFromEnv, defaultRemoteConfig, sshArgs} from "./selfPlayController.ts";
+import {sshTargetFromEnv, defaultRemoteConfig, absolutizeConfig, sshArgs} from "./selfPlayController.ts";
 
 // Gauntlet tournaments (jewkiebot vs a field of engines), run fully on the remote
 // host over SSH — same model as self-play, so nothing executes on the home box.
@@ -46,7 +46,8 @@ export class TournamentController {
             }
 
             const {myEngine, opponents, tc, games, concurrency} = req.body;
-            const cfg = defaultRemoteConfig();
+            // Resolve ~/$HOME against the remote home so cutechess gets real paths.
+            const cfg = await absolutizeConfig(target, defaultRemoteConfig());
             const repoDir = cfg.repoDir;
 
             const taskId = `tourney-${Date.now()}`;

@@ -218,7 +218,7 @@ export default function TasksPage() {
                             <button
                                 onClick={async () => {
                                     setLoading(true);
-                                    await fetch("/api/analysis/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})});
+                                    await fetch("/api/analysis/run", {method: "POST", credentials: "include", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})});
                                     setLoading(false);
                                     fetchTasks();
                                 }}

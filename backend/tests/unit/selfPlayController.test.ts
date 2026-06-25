@@ -10,6 +10,7 @@ import {
     parseLatestElo,
     parseGitTags,
     defaultRemoteConfig,
+    substituteHome,
     type RemoteConfig,
 } from "../../src/controllers/selfPlayController.ts";
 
@@ -119,6 +120,20 @@ describe("parseGitTags", () => {
         const versions = parseGitTags(out);
         expect(versions[0]).toEqual({version: "current", label: "Current build", isCurrent: true});
         expect(versions.map(v => v.version)).toEqual(["current", "v2.10.0", "v2.2.0", "v2.1.0", "v1.0.0"]);
+    });
+});
+
+describe("substituteHome", () => {
+    const HOME = "/home/bot";
+    it("expands ~ and $HOME forms to the absolute home", () => {
+        expect(substituteHome("~/dss/jb", HOME)).toBe("/home/bot/dss/jb");
+        expect(substituteHome("~", HOME)).toBe("/home/bot");
+        expect(substituteHome("$HOME/dss/jb/tools/book.epd", HOME)).toBe("/home/bot/dss/jb/tools/book.epd");
+        expect(substituteHome("${HOME}/dss/jb", HOME)).toBe("/home/bot/dss/jb");
+    });
+    it("leaves already-absolute paths and nulls untouched", () => {
+        expect(substituteHome("/srv/jb", HOME)).toBe("/srv/jb");
+        expect(substituteHome(null, HOME)).toBeNull();
     });
 });
 
