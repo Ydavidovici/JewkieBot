@@ -8,7 +8,7 @@ import {
     splitCompletedGames,
     countFinishedGames,
     parseLatestElo,
-    parseGhReleases,
+    parseGitTags,
     defaultRemoteConfig,
     type RemoteConfig,
 } from "../../src/controllers/selfPlayController.ts";
@@ -57,6 +57,7 @@ describe("buildVersionScript", () => {
     it("short-circuits when cached and otherwise archives + cmake-builds the tag", () => {
         const s = buildVersionScript("v2.0.0", cfg);
         expect(s).toContain(`if [ -x "/home/bot/jb/engines/jewkiebot/build/jewkiebot-v2.0.0" ]; then echo "cached v2.0.0"; exit 0; fi`);
+        expect(s).toContain(`git -C "/home/bot/jb" fetch origin tag "v2.0.0" --no-tags || true`);
         expect(s).toContain(`git -C "/home/bot/jb" archive "v2.0.0" engines/jewkiebot`);
         expect(s).toContain(`-DENGINE_VERSION="v2.0.0"`);
         expect(s).toContain(`--target jewkiebot`);
@@ -112,12 +113,12 @@ describe("countFinishedGames / parseLatestElo", () => {
     });
 });
 
-describe("parseGhReleases", () => {
-    it("prepends current and extracts version tags from gh output", () => {
-        const out = "Release v2.1.0\tLatest\tv2.1.0\t2026-05-29\nv2.0.0\t\tv2.0.0\t2026-05-20";
-        const versions = parseGhReleases(out);
+describe("parseGitTags", () => {
+    it("prepends current and extracts, deduplicates, and sorts version tags from git ls-remote output", () => {
+        const out = "9449e721c37a70aee59ca4394e8c04da7ca846b9\trefs/tags/v1.0.0\n41bf0b2cfc0212a2b8f0dcc4a2bac809c7c77b6f\trefs/tags/v1.0.0^{}\n177eb6cf5eafbc23f6c81359d79229f22daac5f8\trefs/tags/v2.1.0\ndd9076ae802a43f1e49bf2058469baa57aa63ceb\trefs/tags/v2.10.0\ndd9076ae802a43f1e49bf2058469baa57aa63ceb\trefs/tags/v2.2.0";
+        const versions = parseGitTags(out);
         expect(versions[0]).toEqual({version: "current", label: "Current build", isCurrent: true});
-        expect(versions.map(v => v.version)).toEqual(["current", "v2.1.0", "v2.0.0"]);
+        expect(versions.map(v => v.version)).toEqual(["current", "v2.10.0", "v2.2.0", "v2.1.0", "v1.0.0"]);
     });
 });
 

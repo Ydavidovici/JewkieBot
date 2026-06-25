@@ -104,6 +104,7 @@ export function buildVersionScript(version: string, cfg: RemoteConfig): string {
         `if [ -x "${out}" ]; then echo "cached ${version}"; exit 0; fi`,
         `rm -rf "${tmp}"`,
         `mkdir -p "${tmp}"`,
+        `git -C "${cfg.repoDir}" fetch origin tag "${version}" --no-tags || true`,
         `git -C "${cfg.repoDir}" archive "${version}" engines/jewkiebot | tar -x -C "${tmp}"`,
         `cmake -S "${src}" -B "${build}" -DCMAKE_BUILD_TYPE=Release -DENGINE_VERSION="${version}"`,
         `cmake --build "${build}" --target jewkiebot -j`,
@@ -175,22 +176,33 @@ export function parseLatestElo(stdout: string): {elo: number; error: number} | n
     return {elo: parseFloat(last[1]), error: parseFloat(last[2])};
 }
 
-// Parse `gh release list` tab-separated output into selectable versions, with
+// Parse `git ls-remote --tags` output into selectable versions, with
 // "current" prepended.
-export function parseGhReleases(stdout: string): SelfPlayVersion[] {
+export function parseGitTags(stdout: string): SelfPlayVersion[] {
     const tags = stdout
         .split("\n")
         .map(l => l.trim())
         .filter(Boolean)
         .map(line => {
-            const cols = line.split("\t").map(c => c.trim());
-            return cols.find(c => /^v?\d+\.\d+/.test(c)) ?? null;
+            const match = line.match(/refs\/tags\/(v\d+\.\d+(?:\.\d+)?)(?:\^\{\})?$/);
+            return match ? match[1] : null;
         })
         .filter((t): t is string => !!t);
 
+    const uniqueTags = [...new Set(tags)].sort((a, b) => {
+        const pa = a.substring(1).split('.').map(Number);
+        const pb = b.substring(1).split('.').map(Number);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const numA = pa[i] || 0;
+            const numB = pb[i] || 0;
+            if (numA !== numB) return numB - numA;
+        }
+        return 0;
+    });
+
     return [
         {version: "current", label: "Current build", isCurrent: true},
-        ...tags.map(tag => ({version: tag, label: tag, isCurrent: false})),
+        ...uniqueTags.map(tag => ({version: tag, label: tag, isCurrent: false})),
     ];
 }
 
@@ -226,12 +238,12 @@ export class SelfPlayController {
     // GET /api/selfplay/versions — release tags (built on demand) + "current".
     versions = async (req: any, res: any): Promise<any> => {
         try {
-            const proc = this.spawnFn({cmd: ["gh", "release", "list", "--limit", "50"], stdout: "pipe", stderr: "pipe"});
+            const proc = this.spawnFn({cmd: ["git", "ls-remote", "--tags", "origin"], stdout: "pipe", stderr: "pipe"});
             const out = await new Response(proc.stdout).text();
             await proc.exited;
-            res.json({versions: parseGhReleases(out)});
+            res.json({versions: parseGitTags(out)});
         } catch (err: any) {
-            // gh missing/unauthenticated shouldn't break the page — at least offer "current".
+            // git missing or unreachable shouldn't break the page — at least offer "current".
             res.json({versions: [{version: "current", label: "Current build", isCurrent: true}], warning: err.message});
         }
     }
