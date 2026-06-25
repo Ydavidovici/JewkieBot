@@ -97,7 +97,6 @@ export function buildVersionScript(version: string, cfg: RemoteConfig): string {
 
     const out = remoteEnginePath(version, cfg);
     const tmp = `/tmp/jb-build-${version}`;
-    const src = `${tmp}/engines/jewkiebot`;
     const build = `${tmp}/build`;
 
     return [
@@ -105,10 +104,11 @@ export function buildVersionScript(version: string, cfg: RemoteConfig): string {
         `rm -rf "${tmp}"`,
         `mkdir -p "${tmp}"`,
         `git -C "${cfg.repoDir}" fetch origin tag "${version}" --no-tags || true`,
-        `git -C "${cfg.repoDir}" archive "${version}" engines/jewkiebot | tar -x -C "${tmp}"`,
-        `cmake -S "${src}" -B "${build}" -DCMAKE_BUILD_TYPE=Release -DENGINE_VERSION="${version}"`,
-        `cmake --build "${build}" --target jewkiebot -j`,
-        `cp "${build}/jewkiebot" "${out}"`,
+        `if git -C "${cfg.repoDir}" ls-tree -r "${version}" --name-only | grep -q "^engines/jewkiebot/"; then EDIR="engines/jewkiebot"; TARGET="jewkiebot"; else EDIR="engines/myengine"; TARGET="myengine"; fi`,
+        `git -C "${cfg.repoDir}" archive "${version}" "$EDIR" | tar -x -C "${tmp}"`,
+        `cmake -S "${tmp}/$EDIR" -B "${build}" -DCMAKE_BUILD_TYPE=Release -DENGINE_VERSION="${version}"`,
+        `cmake --build "${build}" --target "$TARGET" -j`,
+        `cp "${build}/$TARGET" "${out}"`,
         `chmod +x "${out}"`,
         `rm -rf "${tmp}"`,
         `echo "built ${version}"`,
