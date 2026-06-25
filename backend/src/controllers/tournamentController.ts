@@ -1,14 +1,9 @@
 import {CutechessManager} from "../cutechessManager.js";
-import path from "node:path";
-import fs from "node:fs";
+import {spawn} from "bun";
+import {sshTargetFromEnv, defaultRemoteConfig, sshArgs} from "./selfPlayController.ts";
 
-const CUTECHESS = process.platform === "win32"
-    ? path.join(process.cwd(), "..", "tools", "cutechess-1.4.0-win64", "cutechess-cli.exe")
-    : "cutechess-cli";
-
-const ENGINES_DIR = path.join(process.cwd(), "..", "engines");
-const STORAGE_DIR = path.join(process.cwd(), "storage");
-
+// Gauntlet tournaments (jewkiebot vs a field of engines), run fully on the remote
+// host over SSH — same model as self-play, so nothing executes on the home box.
 export class TournamentController {
     constructor(
         private taskManager: any,
@@ -35,9 +30,24 @@ export class TournamentController {
         };
     }
 
+    // Read a file from the remote host over SSH (the match PGN lives there).
+    private async fetchRemoteFile(target: any, remotePath: string): Promise<string> {
+        const proc = spawn({cmd: sshArgs(target, `cat "${remotePath}"`), stdout: "pipe", stderr: "pipe"});
+        const text = await new Response(proc.stdout).text();
+        await proc.exited;
+        return text;
+    }
+
     runGauntlet = async (req: any, res: any) => {
         try {
-            const {myEngine, opponents, tc, games, concurrency, preset} = req.body;
+            const target = sshTargetFromEnv();
+            if (!target) {
+                return res.status(503).json({error: "Remote execution not configured (set REMOTE_ENGINE_ENABLED=true and REMOTE_SSH_*). Tournaments only run on the remote host."});
+            }
+
+            const {myEngine, opponents, tc, games, concurrency} = req.body;
+            const cfg = defaultRemoteConfig();
+            const repoDir = cfg.repoDir;
 
             const taskId = `tourney-${Date.now()}`;
             await this.taskManager.createTask(taskId, "tournament", req.body);
@@ -45,34 +55,28 @@ export class TournamentController {
             res.json({status: "started", taskId});
 
             (async () => {
-                const manager = new CutechessManager(CUTECHESS);
+                const manager = new CutechessManager(cfg.cutechess, target);
                 const detach = this.attachProgressInterceptor(taskId, games);
 
                 try {
-                    const now = new Date();
-                    const pad = (n: number) => n.toString().padStart(2, "0");
-                    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-                    const pgnOut = path.join(STORAGE_DIR, `tournament_${timestamp}.pgn`);
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+                    const pgnOut = `${repoDir}/backend/storage/tournament_${timestamp}.pgn`;
 
                     const rounds = Math.max(1, Math.ceil(parseInt(games, 10) / (opponents.length * 2)));
 
-                    const resolvedOpponents = opponents.map((opp: any) => {
-                        const resolvedPath = path.isAbsolute(opp.path) ? opp.path : path.join(ENGINES_DIR, opp.path);
-                        return {
-                            name: opp.name,
-                            path: resolvedPath,
-                            args: opp.args || [],
-                            sshConfig: { host: "olddesktop", enginePath: resolvedPath },
-                        };
-                    });
-
-                    const resolvedMyEnginePath = path.isAbsolute(myEngine.path) ? myEngine.path : path.join(ENGINES_DIR, myEngine.path);
-
+                    // Engine paths resolve on the REMOTE host — opponent engines live
+                    // under <repoDir>/engines (see fetch_engines.sh). Absolute/`~`
+                    // paths are passed through untouched.
+                    const remotePath = (p: string) => (p.startsWith("/") || p.startsWith("~")) ? p : `${repoDir}/engines/${p}`;
+                    const resolvedOpponents = opponents.map((opp: any) => ({
+                        name: opp.name,
+                        path: remotePath(opp.path),
+                        args: opp.args || [],
+                    }));
                     const resolvedMyEngine = {
                         name: myEngine.name,
-                        path: resolvedMyEnginePath,
+                        path: remotePath(myEngine.path),
                         args: myEngine.args || [],
-                        sshConfig: { host: "olddesktop", enginePath: resolvedMyEnginePath },
                     };
 
                     const resultPgn = await manager.runGauntlet({
@@ -82,10 +86,10 @@ export class TournamentController {
                         rounds,
                         concurrency: parseInt(concurrency || "2", 10),
                         pgnOut,
-                        openingBook: {file: path.join(process.cwd(), "..", "tools", "UHO_4060_v1.epd"), format: "epd"},
+                        openingBook: cfg.openingBook ? {file: cfg.openingBook, format: "epd"} : null,
                     });
 
-                    const pgnContent = fs.readFileSync(resultPgn, "utf-8");
+                    const pgnContent = await this.fetchRemoteFile(target, resultPgn);
                     const ingestResults = await this.pgnManager.ingestPgnString(pgnContent);
 
                     await this.taskManager.updateTaskStatus(taskId, "COMPLETED", {
@@ -105,5 +109,4 @@ export class TournamentController {
             res.status(500).json({error: err.message});
         }
     }
-
 }

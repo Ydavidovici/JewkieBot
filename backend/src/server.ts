@@ -134,6 +134,30 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     return {app, getBotInstance: () => lichessBotInstance, getAnalyzer: () => analyzer};
 }
 
+// Fetch the Linux Stockfish build into `stockfishPath`. Returns whether a binary
+// ended up there. Run in the background so it never blocks server startup.
+async function downloadStockfish(stockfishPath: string): Promise<boolean> {
+    const {spawnSync} = await import("child_process");
+    const fs = await import("fs");
+    const destDir = path.dirname(stockfishPath);
+    fs.mkdirSync(destDir, {recursive: true});
+
+    const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar";
+    const tarPath = path.join(destDir, "stockfish.tar");
+
+    console.log(`[Server] Downloading Stockfish in the background from ${url} ...`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+    await Bun.write(tarPath, await res.arrayBuffer());
+
+    const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64 ${stockfishPath} 2>/dev/null || true && chmod +x ${stockfishPath} 2>/dev/null || true`;
+    spawnSync("bash", ["-c", cmd], {stdio: "inherit"});
+    fs.unlinkSync(tarPath);
+
+    return Bun.file(stockfishPath).exists();
+}
+
 if (import.meta.main) {
     const PROD_PATH = path.join(import.meta.dir, "jewkiebot");
     const DEV_PATH = path.resolve(import.meta.dir, "../../engines/jewkiebot/build/jewkiebot.exe");
@@ -209,53 +233,30 @@ if (import.meta.main) {
     };
 
     const isWindows = process.platform === "win32";
+    const remoteEngines = process.env.REMOTE_ENGINE_ENABLED === "true";
     const defaultStockfishName = isWindows ? "stockfish.exe" : "stockfish";
     const defaultStockfishPath = path.resolve(import.meta.dir, `../../engines/stockfish/${defaultStockfishName}`);
     const STOCKFISH_PATH = process.env.STOCKFISH_PATH || defaultStockfishPath;
-    let stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
+    const stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
 
-    if (!stockfishExists && !isWindows) {
-        console.log(`[Server] Stockfish not found at ${STOCKFISH_PATH}. Downloading...`);
-        try {
-            const {spawnSync} = await import("child_process");
-            const fs = await import("fs");
-            const destDir = path.dirname(STOCKFISH_PATH);
-            fs.mkdirSync(destDir, {recursive: true});
-
-            const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar";
-            const tarPath = path.join(destDir, "stockfish.tar");
-
-            console.log(`[Server] Fetching ${url} using Bun...`);
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-
-            const size = res.headers.get("content-length");
-            const sizeMB = size ? (parseInt(size) / 1024 / 1024).toFixed(1) + " MB" : "a large file";
-            console.log(`[Server] Downloading ${sizeMB}... this may take a minute and has no progress bar. Please wait...`);
-
-            const buffer = await res.arrayBuffer();
-            await Bun.write(tarPath, buffer);
-
-            console.log(`[Server] Download complete. Extracting archive...`);
-            const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64 ${STOCKFISH_PATH} 2>/dev/null || true && chmod +x ${STOCKFISH_PATH} 2>/dev/null || true`;
-            spawnSync("bash", ["-c", cmd], {stdio: "inherit"});
-
-            fs.unlinkSync(tarPath);
-
-            stockfishExists = await Bun.file(STOCKFISH_PATH).exists();
-            if (stockfishExists) console.log("[Server] Stockfish downloaded successfully.");
-        } catch (err) {
-            console.error("[Server] Failed to auto-download stockfish:", err);
-        }
+    // When engines run remotely (REMOTE_ENGINE_ENABLED), the analyzer's Stockfish
+    // runs on the remote host over SSH, so a local binary isn't needed. Otherwise,
+    // fetch it in the BACKGROUND — blocking startup on a ~100 MB download is what
+    // makes the reverse proxy 502 on cold starts.
+    if (!stockfishExists && !isWindows && !remoteEngines) {
+        downloadStockfish(STOCKFISH_PATH)
+            .then(ok => console.log(ok ? "[Server] Stockfish downloaded successfully." : "[Server] Stockfish download did not produce a binary."))
+            .catch(err => console.error("[Server] Failed to auto-download stockfish:", err));
     }
 
-    // studentPath = jewkiebot, so analysis records both Stockfish's verdict
-    // (teacher) and jewkiebot's own eval/best-move (student) for every position.
-    const analyzer = stockfishExists
+    // Analysis is available when we have a usable Stockfish: a local binary, or a
+    // remote one via SSH. studentPath = jewkiebot, so analysis records both
+    // Stockfish's verdict (teacher) and jewkiebot's own eval/best-move (student).
+    const analyzer = (stockfishExists || remoteEngines)
         ? new GameAnalyzer(STOCKFISH_PATH, {depth: 20, studentPath: JEWKIEBOT_PATH})
         : null;
 
-    if (!stockfishExists) console.warn("[Server] Stockfish not found — analysis endpoints disabled.");
+    if (!analyzer) console.warn("[Server] Stockfish not found — analysis endpoints disabled until it's available.");
 
     const {app} = createApp({
         engineManager,

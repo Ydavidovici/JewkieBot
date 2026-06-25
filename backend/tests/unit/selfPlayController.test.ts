@@ -58,9 +58,9 @@ describe("buildVersionScript", () => {
         const s = buildVersionScript("v2.0.0", cfg);
         expect(s).toContain(`if [ -x "/home/bot/jb/engines/jewkiebot/build/jewkiebot-v2.0.0" ]; then echo "cached v2.0.0"; exit 0; fi`);
         expect(s).toContain(`git -C "/home/bot/jb" fetch origin tag "v2.0.0" --no-tags || true`);
-        expect(s).toContain(`git -C "/home/bot/jb" archive "v2.0.0" engines/jewkiebot`);
+        expect(s).toContain(`git -C "/home/bot/jb" archive "v2.0.0" "$EDIR"`);
         expect(s).toContain(`-DENGINE_VERSION="v2.0.0"`);
-        expect(s).toContain(`--target jewkiebot`);
+        expect(s).toContain(`--target "$TARGET"`);
     });
 });
 

@@ -5,6 +5,9 @@ import { Swords, Play, ChevronLeft, ChevronRight, Activity, Cpu } from "lucide-r
 import { getSelfPlayVersions, runSelfPlay } from "../services/api.js";
 import { useBot } from "../context/BotContext.jsx";
 
+// localStorage key for the in-progress run, so the live view survives navigation.
+const ACTIVE_KEY = "selfplay:activeTask";
+
 // A completed self-play game, as streamed in live (PGN) plus its decoded plies.
 interface LiveGame {
     index: number;
@@ -12,6 +15,7 @@ interface LiveGame {
     white: string;
     black: string;
     result: string;
+    startFen: string; // position before ply 1 (book/opening position, not always standard)
     fens: string[];   // FEN after each ply (fens[0] = after ply 1)
     sans: string[];
 }
@@ -27,13 +31,15 @@ function decodeGame(index: number, pgn: string): LiveGame {
         result = h.Result || result;
     } catch (_) { /* keep partial defaults */ }
 
-    const sans = c.history();
-    const fens: string[] = [];
-    const replay = new Chess();
-    for (const san of sans) {
-        try { replay.move(san); fens.push(replay.fen()); } catch (_) { break; }
-    }
-    return { index, pgn, white, black, result, fens, sans };
+    // Verbose history carries the FEN after each move and the game's real
+    // starting position. Cutechess games begin from a book position, so replaying
+    // SANs from the standard start used to diverge and cut navigation short —
+    // this avoids that entirely.
+    const verbose = c.history({ verbose: true }) as any[];
+    const sans = verbose.map(m => m.san);
+    const fens = verbose.map(m => m.after);
+    const startFen = verbose.length > 0 ? verbose[0].before : "start";
+    return { index, pgn, white, black, result, startFen, fens, sans };
 }
 
 export default function SelfPlayPage() {
@@ -70,12 +76,61 @@ export default function SelfPlayPage() {
             .catch(() => setVersions([{ version: "current", label: "Current build" }]));
     }, [activeUrl]);
 
-    useEffect(() => () => esRef.current?.close(), []);
-
     const stop = () => { esRef.current?.close(); esRef.current = null; };
+
+    // Subscribe to a run's SSE stream. The backend replays the games + progress so
+    // far, so this also works when re-attaching to a run already in progress (e.g.
+    // after navigating away and back).
+    const subscribeStream = (taskId: string) => {
+        stop();
+        setRunning(true);
+        const es = new EventSource(`${activeUrl}/api/selfplay/stream/${taskId}`);
+        esRef.current = es;
+
+        es.addEventListener("progress", (e: MessageEvent) => {
+            const d = JSON.parse(e.data);
+            if (d.progress) setProgress(d.progress);
+            if (d.elo) setElo(d.elo);
+        });
+        es.addEventListener("game", (e: MessageEvent) => {
+            const d = JSON.parse(e.data);
+            const decoded = decodeGame(d.index, d.pgn);
+            setLiveGames(prev => {
+                const next = [...prev];
+                next[d.index] = decoded;
+                return next;
+            });
+            // Auto-follow the freshest game unless the user is browsing an older one.
+            setSelected(prev => (prev === null ? d.index : prev));
+        });
+        const finish = () => { setRunning(false); localStorage.removeItem(ACTIVE_KEY); stop(); };
+        es.addEventListener("done", finish);
+        es.addEventListener("error", (e: MessageEvent) => {
+            try { const d = JSON.parse((e as any).data); setError(d.error || "stream error"); } catch (_) {}
+            finish();
+        });
+        // Connection dropped (or the run no longer exists, e.g. backend restarted).
+        // Stop retrying; the saved task is kept so a later revisit can try again.
+        es.onerror = () => { stop(); setRunning(false); };
+    };
+
+    // On mount, resume a run that's still in progress for this environment.
+    useEffect(() => {
+        const saved = localStorage.getItem(ACTIVE_KEY);
+        if (saved) {
+            try {
+                const { taskId, url } = JSON.parse(saved);
+                if (url === activeUrl && taskId) subscribeStream(taskId);
+                else localStorage.removeItem(ACTIVE_KEY);
+            } catch (_) { localStorage.removeItem(ACTIVE_KEY); }
+        }
+        return () => esRef.current?.close();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeUrl]);
 
     const start = async () => {
         stop();
+        localStorage.removeItem(ACTIVE_KEY);
         setError(null);
         setLiveGames([]);
         setSelected(null);
@@ -96,31 +151,8 @@ export default function SelfPlayPage() {
             const taskId = res?.taskId;
             if (!taskId) throw new Error("No taskId returned");
 
-            const es = new EventSource(`${activeUrl}/api/selfplay/stream/${taskId}`);
-            esRef.current = es;
-
-            es.addEventListener("progress", (e: MessageEvent) => {
-                const d = JSON.parse(e.data);
-                if (d.progress) setProgress(d.progress);
-                if (d.elo) setElo(d.elo);
-            });
-            es.addEventListener("game", (e: MessageEvent) => {
-                const d = JSON.parse(e.data);
-                const decoded = decodeGame(d.index, d.pgn);
-                setLiveGames(prev => {
-                    const next = [...prev];
-                    next[d.index] = decoded;
-                    return next;
-                });
-                // Auto-follow the freshest game unless the user is browsing an older one.
-                setSelected(prev => (prev === null ? d.index : prev));
-            });
-            es.addEventListener("done", () => { setRunning(false); stop(); });
-            es.addEventListener("error", (e: MessageEvent) => {
-                try { const d = JSON.parse((e as any).data); setError(d.error || "stream error"); } catch (_) {}
-                setRunning(false);
-                stop();
-            });
+            localStorage.setItem(ACTIVE_KEY, JSON.stringify({ taskId, url: activeUrl }));
+            subscribeStream(taskId);
         } catch (err: any) {
             setError(err?.response?.data?.error || err.message);
             setRunning(false);
@@ -128,7 +160,7 @@ export default function SelfPlayPage() {
     };
 
     const current = selected !== null ? liveGames[selected] : null;
-    const boardFen = !current || ply === 0 ? "start" : (current.fens[ply - 1] || "start");
+    const boardFen = !current ? "start" : ply === 0 ? current.startFen : (current.fens[ply - 1] || current.startFen);
     const maxPly = current ? current.fens.length : 0;
 
     const score = (() => {
