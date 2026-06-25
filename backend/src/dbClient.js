@@ -37,6 +37,10 @@ export const dbClient = {
         return transport.get(`/games/player/${encodeURIComponent(playerName)}`);
     },
 
+    async getRecentGames(limit = 50) {
+        return transport.get(`/games/recent?limit=${limit}`);
+    },
+
     async getGameMoves(id) {
         return transport.get(`/games/${id}/moves`);
     },

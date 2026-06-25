@@ -403,6 +403,10 @@ export class LichessBot {
         }
 
         this.streamEvents();
+
+        // Clean up any games orphaned by a previous ungraceful shutdown, in the
+        // background so it never delays startup.
+        this.reconcileUnfinishedGames().catch(err => this.notifier.warn(`[Reconcile] Failed: ${err?.message}`));
     }
 
     stop() {
@@ -879,6 +883,65 @@ export class LichessBot {
 
         this.dbGameIds.delete(lichessGameId);
         this.savedPlies.delete(lichessGameId);
+    }
+
+    // Games whose stream ended before a terminal state (e.g. an ungraceful
+    // restart) are left with finished_at = null. Ask Lichess for their real
+    // outcome and finalize them. Best-effort and rate-limit-aware.
+    async reconcileUnfinishedGames() {
+        if (process.env.NODE_ENV === "test") return;
+
+        const myEnv = process.env.APP_ENV || "prod";
+
+        let games;
+        try {
+            games = await dbClient.getRecentGames(200);
+        } catch (err) {
+            this.notifier.warn(`[Reconcile] Could not load recent games: ${err.message}`);
+            return;
+        }
+
+        const activeDbIds = new Set(this.dbGameIds.values());
+        const orphans = (games || []).filter(g =>
+            g.source === "lichess" &&
+            g.env === myEnv &&
+            !g.finished_at &&
+            g.lichess_game_id &&
+            !activeDbIds.has(g.id)
+        );
+        if (orphans.length === 0) return;
+
+        this.notifier.info(`[Reconcile] Checking ${orphans.length} unfinished game(s) against Lichess...`);
+        let fixed = 0;
+
+        for (const g of orphans) {
+            try {
+                const res = await this._lichessFetch(`https://lichess.org/game/export/${g.lichess_game_id}?moves=false&clocks=false`, {
+                    headers: {Accept: "application/json"},
+                });
+                if (!res.ok) continue;
+
+                const data = await res.json();
+                const status = data.status;
+                // Still in progress — leave it for the live stream to finalize.
+                if (!status || status === "started" || status === "created") continue;
+
+                await dbClient.updateGame(g.id, {
+                    result: mapResult(status, data.winner),
+                    termination: status,
+                    finished_at: new Date().toISOString(),
+                });
+                fixed++;
+            } catch (err) {
+                if (err instanceof LichessRateLimited) {
+                    this.notifier.warn("[Reconcile] Rate-limited; stopping for now");
+                    break;
+                }
+                // Skip this game; reconciliation is best-effort.
+            }
+        }
+
+        if (fixed > 0) this.notifier.info(`[Reconcile] Finalized ${fixed} orphaned game(s)`);
     }
 
     async createChallenge(username, limit, increment, rated = true) {
