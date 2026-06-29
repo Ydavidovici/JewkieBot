@@ -24,8 +24,8 @@ private:
     int evaluatePositional(const Board& board) const;
 
     int pieceValues[PST_COUNT] = {100, 320, 330, 500, 900, 20000};
-    std::vector<int> whitePawnTable;
 
+    std::vector<int> whitePawnTable;
     std::vector<int> whiteKnightTable;
     std::vector<int> whiteBishopTable;
     std::vector<int> whiteRookTable;
