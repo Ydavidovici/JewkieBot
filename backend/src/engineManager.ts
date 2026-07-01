@@ -383,12 +383,14 @@ export class UciEngine extends EventEmitter {
 
 export class EngineManager {
     engines: Map<string, any>;
+    recoveryTimers: Map<string, any>;
     engineOptions: Partial<UciEngineOptions>;
     maxEngines: number;
     notifier: any;
 
     constructor(options: Partial<EngineManagerOptions> = {}) {
         this.engines = new Map();
+        this.recoveryTimers = new Map();
         this.engineOptions = options.engineOptions ?? {};
         this.maxEngines = options.maxEngines ?? Infinity;
         this.notifier = options.notifier ?? nullNotifier;
@@ -457,6 +459,23 @@ export class EngineManager {
             console.error(`[Manager] Engine ${id} died permanently:`, err);
             this.notifier.error(`[EngineManager] Engine ${id} died permanently`, {message: err?.message});
             this.engines.delete(id);
+
+            // Auto-recovery mechanism
+            if (!this.recoveryTimers.has(id)) {
+                console.log(`[Manager] Starting auto-recovery for engine ${id}...`);
+                const timer = setInterval(async () => {
+                    try {
+                        console.log(`[Manager] Auto-recovery attempt for engine ${id}...`);
+                        await this.registerEngine(id, enginePath);
+                        console.log(`[Manager] Auto-recovery successful for engine ${id}!`);
+                        const t = this.recoveryTimers.get(id);
+                        if (t) clearInterval(t);
+                        this.recoveryTimers.delete(id);
+                    } catch (e) {
+                    }
+                }, 10000);
+                this.recoveryTimers.set(id, timer as any);
+            }
         });
 
         try {
@@ -480,6 +499,11 @@ export class EngineManager {
     }
 
     async shutdownEngine(id) {
+        if (this.recoveryTimers.has(id)) {
+            clearInterval(this.recoveryTimers.get(id));
+            this.recoveryTimers.delete(id);
+        }
+
         const engine = this.engines.get(id);
         if (engine) {
             this.engines.delete(id);
@@ -491,7 +515,13 @@ export class EngineManager {
     }
 
     async shutdownAll() {
-        console.log(`[Manager] Shutting down all ${this.engines.size} engines...`);
+        this.notifier.info(`[Manager] Shutting down all ${this.engines.size} engines...`);
+
+        for (const timer of this.recoveryTimers.values()) {
+            clearInterval(timer);
+        }
+
+        this.recoveryTimers.clear();
 
         const stopPromises = Array.from(this.engines.values()).map(engine =>
             engine.stop().catch(e => {

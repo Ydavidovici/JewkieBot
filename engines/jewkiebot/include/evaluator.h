@@ -25,21 +25,21 @@ private:
 
     int pieceValues[PST_COUNT] = {100, 320, 330, 500, 900, 20000};
 
-    std::vector<int> whitePawnTable;
-    std::vector<int> whiteKnightTable;
-    std::vector<int> whiteBishopTable;
-    std::vector<int> whiteRookTable;
-    std::vector<int> whiteQueenTable;
-    std::vector<int> whiteKingTableMG;
-    std::vector<int> whiteKingTableEG;
+    std::array<int, 64> whitePawnTable;
+    std::array<int, 64> whiteKnightTable;
+    std::array<int, 64> whiteBishopTable;
+    std::array<int, 64> whiteRookTable;
+    std::array<int, 64> whiteQueenTable;
+    std::array<int, 64> whiteKingTableMG;
+    std::array<int, 64> whiteKingTableEG;
 
-    std::vector<int> blackPawnTable;
-    std::vector<int> blackKnightTable;
-    std::vector<int> blackBishopTable;
-    std::vector<int> blackRookTable;
-    std::vector<int> blackQueenTable;
-    std::vector<int> blackKingTableMG;
-    std::vector<int> blackKingTableEG;
+    std::array<int, 64> blackPawnTable;
+    std::array<int, 64> blackKnightTable;
+    std::array<int, 64> blackBishopTable;
+    std::array<int, 64> blackRookTable;
+    std::array<int, 64> blackQueenTable;
+    std::array<int, 64> blackKingTableMG;
+    std::array<int, 64> blackKingTableEG;
 
     void initializePieceSquareTables();
 };

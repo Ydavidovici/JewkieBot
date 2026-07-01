@@ -13,7 +13,9 @@
       "PowerShell(claude doctor *)",
       "PowerShell(bun test *)",
       "WebSearch",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

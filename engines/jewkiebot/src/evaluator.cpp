@@ -10,7 +10,7 @@ Evaluator::Evaluator() {
 int Evaluator::evaluate(const Board& board, Color sideToMove) const {
     int score = 0;
 
-    auto evalPieceType = [&](const std::vector<int>& whiteTable, const std::vector<int>& blackTable, Board::PieceIndex pieceTable) {
+    auto evalPieceType = [&](const std::array<int, 64>& whiteTable, const std::array<int, 64>& blackTable, Board::PieceIndex pieceTable) {
         int value = pieceValues[pieceTable];
 
         uint64_t whiteBitBoard = board.pieceBB(Color::WHITE, pieceTable);
@@ -59,7 +59,7 @@ int Evaluator::evaluateMaterial(const Board& board) const {
 int Evaluator::evaluatePositional(const Board& board) const {
     int score = 0;
 
-    auto applyPST = [&](uint64_t bitboard, const std::vector<int>& table, const int sign) {
+    auto applyPST = [&](uint64_t bitboard, const std::array<int, 64>& table, const int sign) {
         while (bitboard) {
             int square = __builtin_ctzll(bitboard);
             score += sign * table[square];
@@ -192,6 +192,7 @@ int Evaluator::getParameter(int index) const {
     return 0;
 }
 
+// used for perf testing
 void Evaluator::setParameter(int index, int value) {
     if (index < 6) { pieceValues[index] = value; return; }
     index -= 6;
@@ -209,8 +210,7 @@ void Evaluator::setParameter(int index, int value) {
 }
 
 void Evaluator::updateBlackTables() {
-    auto mirror = [](const std::vector<int>& white, std::vector<int>& black) {
-        black.resize(64);
+    auto mirror = [](const std::array<int, 64>& white, std::array<int, 64>& black) {
         for (int i = 0; i < 64; ++i) {
             black[i] = white[i ^ 56];
         }
