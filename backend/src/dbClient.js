@@ -1,6 +1,8 @@
 import {ApiTransport} from "./apiTransport.js";
 import {nullNotifier} from "./notifier.js";
 
+// TODO: migrate to ts
+
 const transport = new ApiTransport({
     baseUrl: process.env.DB_SERVICE_URL || "http://192.168.1.51:4001/api/v1/chess",
     notifier: nullNotifier,

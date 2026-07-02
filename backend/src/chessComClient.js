@@ -1,5 +1,7 @@
 import {ApiTransport} from "./apiTransport.js";
 
+// TODO: migrate to ts
+
 export class chessComClient {
     constructor() {
         this.api = new ApiTransport({

@@ -1,3 +1,5 @@
+// TODO: migrate to ts
+
 export class ApiTransport {
     constructor({ baseUrl = "", token = null, defaultHeaders = {}, notifier = null, unwrapData = false } = {}) {
         this.baseUrl = baseUrl;

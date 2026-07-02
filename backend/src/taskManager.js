@@ -1,5 +1,7 @@
 import { taskClient } from "./dbClient.js";
 
+// TODO: migrate to ts
+
 const CONSUMER_ID = "jewkiebot";
 
 export const taskManager = {

@@ -1,6 +1,8 @@
 import {EventEmitter} from "node:events";
 import {ApiTransport} from "./apiTransport.js";
 
+// TODO: migrate to ts
+
 export const LEVELS = Object.freeze({
     INFO: "info",
     WARN: "warn",

@@ -1,6 +1,8 @@
 import {spawn} from "bun";
 import {EventEmitter} from "node:events";
 
+// TODO: migrate to ts
+
 // argv for `ssh <target> <remoteCommand>` (mirrors SshUciEngine's flags).
 function sshArgs(target, remoteCommand) {
     const args = ["ssh"];

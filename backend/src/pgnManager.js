@@ -1,6 +1,8 @@
 import {Chess} from "chess.js";
 import fs from "node:fs";
 
+// TODO: migrate to ts
+
 export class PgnManager {
     constructor(dbClient) {
         this.dbClient = dbClient;
