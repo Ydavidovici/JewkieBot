@@ -64,4 +64,5 @@ private:
     double soft_scale_{1.0};
     int stable_count_{0};
     bool is_infinite_{false};
+    bool is_fixed_{false};  // go movetime: use the whole budget, no stability scaling
 };

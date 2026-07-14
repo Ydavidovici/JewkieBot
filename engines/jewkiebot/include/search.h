@@ -54,13 +54,22 @@ public:
     uint64_t getNodes() const { return aggregateStats_.totalNodes; }
 
 private:
+    static constexpr int MAX_PLY = 128;
+
     struct WorkerState {
         SearchStats stats;
         int history[2][64][64];
+        // Two killer slots per ply: quiet moves that caused a beta cutoff
+        // at this depth, tried right after captures in move ordering.
+        Move killers[MAX_PLY][2];
 
         void reset() {
             stats.reset();
             std::memset(history, 0, sizeof(history));
+            for (auto& k : killers) {
+                k[0] = Move();
+                k[1] = Move();
+            }
         }
     };
 
@@ -73,9 +82,10 @@ private:
 
     bool shouldStop() const;
 
-    void helperThreadMain(WorkerState& ws, Board board, int maxDepth, int threadId);
+    void helperThreadMain(WorkerState& worker, Board board, int maxDepth, int threadId);
 
-    int negamax(WorkerState& ws, Board& board, int depth, int alpha, int beta, int plyFromRoot);
-    int quiescence(WorkerState& ws, Board& board, int alpha, int beta, int plyFromRoot);
-    void orderMoves(const WorkerState& ws, Board& board, std::vector<Move>& moves, const Move& ttMove);
+    int negamax(WorkerState& worker, Board& board, int depth, int alpha, int beta, int plyFromRoot);
+    int quiescence(WorkerState& worker, Board& board, int alpha, int beta, int plyFromRoot);
+    void orderMoves(const WorkerState& worker, const Board& board, Move* moves, int count, const Move& ttMove, int ply);
+    void orderMoves(const WorkerState& worker, const Board& board, MoveList& moves, const Move& ttMove, int ply);
 };

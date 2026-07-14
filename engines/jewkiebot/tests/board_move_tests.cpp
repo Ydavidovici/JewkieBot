@@ -25,18 +25,22 @@ static int sq_from(const string& sq) {
     int r = sq[1] - '1';
     return r*8 + f;
 }
-static vector<string> to_uci(const vector<Move>& mv) {
+static vector<string> to_uci(const MoveList& mv) {
     vector<string> out; out.reserve(mv.size());
     for (auto& m : mv) out.push_back(m.toString());
     return out;
 }
 static vector<string> gen_uci(const Board& b) {
-    return to_uci(b.generateLegalMoves());
+    MoveList moves;
+    b.generateLegalMoves(moves);
+    return to_uci(moves);
 }
 static vector<string> moves_from(const Board& b, const string& from) {
     int s = sq_from(from);
     vector<string> out;
-    for (auto& m : b.generateLegalMoves()) {
+    MoveList moves;
+    b.generateLegalMoves(moves);
+    for (auto& m : moves) {
         if (m.start == s) out.push_back(m.toString());
     }
     std::sort(out.begin(), out.end());
@@ -49,7 +53,8 @@ static void dump_moves(const string& label, const vector<string>& mv) {
 }
 
 Move find_move(const Board& b, const std::string& uci) {
-    auto moves = b.generateLegalMoves();
+    MoveList moves;
+    b.generateLegalMoves(moves);
     for (const auto& m : moves) {
         if (m.toString() == uci) return m;
     }
@@ -69,7 +74,8 @@ static void test_move_roundtrip() {
 
     for (auto& F : FENS) {
         Board b; b.loadFEN(F);
-        auto mv = b.generateLegalMoves();
+        MoveList mv;
+        b.generateLegalMoves(mv);
         for (auto& m : mv) {
             auto s = m.toString();
             Move back = Move::fromUCI(s);
@@ -187,7 +193,8 @@ static void test_king_safety_and_no_king_captures() {
     }
     {
         Board b; b.loadFEN("8/8/8/8/8/8/8/4K2k w - - 0 1");
-        auto mv = b.generateLegalMoves();
+        MoveList mv;
+        b.generateLegalMoves(mv);
         int blackKing = sq_from("h1");
         for (auto& m : mv) {
             assert(m.end != blackKing);
@@ -244,14 +251,18 @@ static void test_en_passant_rules() {
     auto v = gen_uci(b);
     dump_moves("EP enabled", v);
     bool foundEP=false;
-    for (auto& m : b.generateLegalMoves()) {
+    MoveList epMoves;
+    b.generateLegalMoves(epMoves);
+    for (auto& m : epMoves) {
         if (m.type==MoveType::EN_PASSANT && m.toString()=="e5d6") foundEP = true;
     }
     assert(foundEP);
 
     assert(b.makeMove(Move::fromUCI("e1d1")));
     auto v2 = gen_uci(b);
-    for (auto& m : b.generateLegalMoves()) {
+    MoveList epMoves2;
+    b.generateLegalMoves(epMoves2);
+    for (auto& m : epMoves2) {
         assert(!(m.type==MoveType::EN_PASSANT && m.toString()=="e5d6"));
     }
     std::cout << "  ok en passant immediate-only\n\n";

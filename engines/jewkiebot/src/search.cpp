@@ -27,9 +27,7 @@ static int getMvvLvaScore(const Board& board, const Move& move) {
     return vScore - aScore;
 }
 
-Search::Search(const Evaluator& evaluator, TranspositionTable& tt)
-    : evaluator_(evaluator), tt_(tt),
-      numThreads_(std::max(1u, std::thread::hardware_concurrency())) {}
+Search::Search(const Evaluator& evaluator, TranspositionTable& tt): evaluator_(evaluator), tt_(tt), numThreads_(std::max(1u, std::thread::hardware_concurrency())) {}
 
 void Search::setThreadCount(int count) {
     numThreads_ = std::max(1, count);
@@ -45,33 +43,34 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
 
     if (infinite) {
         tm_.startInfinite();
-    }
-    else if (movesToGo == 1 && incrementMs == 0 && timeLeftMs > 0) {
+    } else if (movesToGo == 1 && incrementMs == 0 && timeLeftMs > 0) {
         tm_.startFixed(static_cast<uint64_t>(timeLeftMs));
-    }
-    else if (timeLeftMs > 0) {
+    } else if (timeLeftMs > 0) {
         tm_.start(timeLeftMs, incrementMs, movesToGo);
-    }
-    else {
+    } else {
         tm_.start(50000, 0, 0);
     }
 
-    auto rootMoves = board.generateLegalMoves();
+    MoveList rootMoves;
+    board.generateLegalMoves(rootMoves);
 
     if (rootMoves.empty()) {
-        return Move();
+        return {};
     }
 
     Move bestMove = rootMoves[0];
-    Move prevBestMove;
+    Move prevBestMove{};
     bool hasPrevBest = false;
     int prevScore = 0;
 
     std::vector<WorkerState> workers(numThreads_);
-    for (auto& ws : workers) ws.reset();
+
+    for (auto& worker : workers) worker.reset();
 
     std::vector<std::thread> helpers;
+
     helpers.reserve(numThreads_ - 1);
+
     for (int i = 1; i < numThreads_; ++i) {
         helpers.emplace_back(&Search::helperThreadMain, this, std::ref(workers[i]), Board(board), maxDepth, i);
     }
@@ -83,32 +82,31 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
         int alpha = -INF;
         int beta = INF;
 
-        orderMoves(workers[0], board, rootMoves, bestMove);
+        orderMoves(workers[0], board, rootMoves, bestMove, 0);
 
-        Move currentBestMove;
+        Move currentBestMove = rootMoves[0];
         int currentBestScore = -INF;
-        bool foundLegalMove = false;
 
         int move_number = 1;
         for (const auto& move : rootMoves) {
-            if (!board.makeMove(move)) {
-                continue;
-            }
+            board.makeMove(move);
 
             auto now = std::chrono::steady_clock::now();
             auto timeMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - tm_.getStartTime()).count();
+
             if (depth >= 4 && timeMs > 500) {
                 long long currentTotalNodes = 0;
-                for (const auto& ws : workers) {
-                    currentTotalNodes += ws.stats.totalNodes;
+
+                for (const auto& worker : workers) {
+                    currentTotalNodes += worker.stats.totalNodes;
                 }
+
                 long long nps = timeMs > 0 ? (currentTotalNodes * 1000) / timeMs : 0;
-                
-                std::cout << "info depth " << depth 
-                          << " currmove " << move.toString() 
-                          << " currmovenumber " << move_number;
-                          
+
+                std::cout << "info depth " << depth << " currmove " << move.toString() << " currmovenumber " << move_number;
+
                 int displayScore = (currentBestScore != -INF) ? currentBestScore : prevScore;
+
                 if (displayScore > MATE_SCORE - 1000) {
                     std::cout << " score mate " << (MATE_SCORE - displayScore + 1) / 2;
                 } else if (displayScore < -MATE_SCORE + 1000) {
@@ -117,18 +115,13 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
                     std::cout << " score cp " << displayScore;
                 }
 
-                std::cout << " nodes " << currentTotalNodes 
-                          << " nps " << nps 
-                          << " time " << timeMs << "\n";
+                std::cout << " nodes " << currentTotalNodes << " nps " << nps << " time " << timeMs << "\n";
+
                 std::cout.flush();
             }
 
-            if (!foundLegalMove) {
-                currentBestMove = move;
-                foundLegalMove = true;
-            }
-
             int score = -negamax(workers[0], board, depth - 1, -beta, -alpha, 1);
+
             board.unmakeMove();
 
             if (shouldStop()) break;
@@ -141,11 +134,11 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             if (score > alpha) {
                 alpha = score;
             }
-            
+
             ++move_number;
         }
 
-        if (!shouldStop() && foundLegalMove) {
+        if (!shouldStop()) {
             bestMove = currentBestMove;
             const bool changed = hasPrevBest && !(bestMove == prevBestMove);
             tm_.onIterationComplete(changed);
@@ -154,8 +147,8 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
             prevScore = currentBestScore;
 
             long long finalTotalNodes = 0;
-            for (const auto& ws : workers) {
-                finalTotalNodes += ws.stats.totalNodes;
+            for (const auto& worker : workers) {
+                finalTotalNodes += worker.stats.totalNodes;
             }
             auto timeMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tm_.getStartTime()).count();
             long long nps = timeMs > 0 ? (finalTotalNodes * 1000) / timeMs : 0;
@@ -171,10 +164,8 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
                 std::cout << " score cp " << currentBestScore;
             }
             
-            std::cout << " pv " << bestMove.toString()
-                      << " nodes " << finalTotalNodes 
-                      << " nps " << nps 
-                      << " time " << timeMs << "\n";
+            std::cout << " pv " << bestMove.toString() << " nodes " << finalTotalNodes << " nps " << nps << " time " << timeMs << "\n";
+
             std::cout.flush();
         }
     }
@@ -183,15 +174,16 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
 
     for (auto& t : helpers) t.join();
 
-    for (const auto& ws : workers) {
-        aggregateStats_ += ws.stats;
+    for (const auto& worker : workers) {
+        aggregateStats_ += worker.stats;
     }
 
     return bestMove;
 }
 
-void Search::helperThreadMain(WorkerState& ws, Board board, int maxDepth, int threadId) {
-    auto moves = board.generateLegalMoves();
+void Search::helperThreadMain(WorkerState& worker, Board board, int maxDepth, int threadId) {
+    MoveList moves;
+    board.generateLegalMoves(moves);
     if (moves.empty()) return;
 
     Move localBest;
@@ -205,7 +197,7 @@ void Search::helperThreadMain(WorkerState& ws, Board board, int maxDepth, int th
         int alpha = -INF;
         int beta = INF;
 
-        orderMoves(ws, board, moves, localBest);
+        orderMoves(worker, board, moves, localBest, 0);
 
         Move currentBest;
         int currentBestScore = -INF;
@@ -226,7 +218,7 @@ void Search::helperThreadMain(WorkerState& ws, Board board, int maxDepth, int th
                 }
             }
 
-            int score = -negamax(ws, board, depth - 1, -beta, -alpha, 1);
+            int score = -negamax(worker, board, depth - 1, -beta, -alpha, 1);
             board.unmakeMove();
 
             if (shouldStop()) break;
@@ -247,12 +239,12 @@ void Search::helperThreadMain(WorkerState& ws, Board board, int maxDepth, int th
     }
 }
 
-int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int beta, int plyFromRoot) {
-    ws.stats.totalNodes++;
+int Search::negamax(WorkerState& worker, Board& board, int depth, int alpha, int beta, int plyFromRoot) {
+    worker.stats.totalNodes++;
 
     int oldAlpha = alpha;
 
-    if ((ws.stats.totalNodes & 2047) == 0 && shouldStop()) return 0;
+    if ((worker.stats.totalNodes & 2047) == 0 && shouldStop()) return 0;
 
     if (plyFromRoot > 0 && (board.isThreefoldRepetition() || board.isFiftyMoveDraw())) {
         return 0;
@@ -264,10 +256,10 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
 
     if (tt_.probe(key, ent)) {
         ttMove = ent.bestMove;
-        ws.stats.ttProbes++;
+        worker.stats.ttProbes++;
 
         if (ent.depth >= depth) {
-            ws.stats.ttHits++;
+            worker.stats.ttHits++;
             if (ent.flag == TranspositionTable::EXACT) return ent.value;
             if (ent.flag == TranspositionTable::LOWERBOUND) alpha = std::max(alpha, ent.value);
             if (ent.flag == TranspositionTable::UPPERBOUND) beta = std::min(beta, ent.value);
@@ -276,7 +268,7 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
     }
 
     if (depth == 0) {
-        return quiescence(ws, board, alpha, beta, plyFromRoot);
+        return quiescence(worker, board, alpha, beta, plyFromRoot);
     }
 
     if (depth >= 3 && !board.inCheck(board.sideToMove()) && plyFromRoot > 0 && beta < MATE_SCORE) {
@@ -287,7 +279,7 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
 
             int R = 2;
 
-            int score = -negamax(ws, board, depth - 1 - R, -beta, -beta + 1, plyFromRoot + 1);
+            int score = -negamax(worker, board, depth - 1 - R, -beta, -beta + 1, plyFromRoot + 1);
 
             board.unmakeNullMove();
 
@@ -299,9 +291,10 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
         }
     }
 
-    auto moves = board.generatePseudoMoves();
+    MoveList moves;
+    board.generatePseudoMoves(moves);
 
-    orderMoves(ws, board, moves, ttMove);
+    orderMoves(worker, board, moves.begin(), moves.size(), ttMove, plyFromRoot);
 
     int bestScore = -INF;
     Move bestMoveInNode;
@@ -315,7 +308,7 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
         int score;
 
         if (movesSearched == 0) {
-            score = -negamax(ws, board, depth - 1, -beta, -alpha, plyFromRoot + 1);
+            score = -negamax(worker, board, depth - 1, -beta, -alpha, plyFromRoot + 1);
         }
         else {
             int reduction = 0;
@@ -324,14 +317,14 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
                 if (depth - 1 - reduction <= 0) reduction = depth - 2;
             }
 
-            score = -negamax(ws, board, depth - 1 - reduction, -alpha - 1, -alpha, plyFromRoot + 1);
+            score = -negamax(worker, board, depth - 1 - reduction, -alpha - 1, -alpha, plyFromRoot + 1);
 
             if (score > alpha && reduction > 0) {
-                score = -negamax(ws, board, depth - 1, -alpha - 1, -alpha, plyFromRoot + 1);
+                score = -negamax(worker, board, depth - 1, -alpha - 1, -alpha, plyFromRoot + 1);
             }
 
             if (score > alpha && score < beta) {
-                score = -negamax(ws, board, depth - 1, -beta, -alpha, plyFromRoot + 1);
+                score = -negamax(worker, board, depth - 1, -beta, -alpha, plyFromRoot + 1);
             }
         }
 
@@ -348,15 +341,20 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
             alpha = score;
 
             if (alpha >= beta) {
-                ws.stats.betaCutoffs++;
-                if (movesSearched == 0) ws.stats.firstMoveCutoffs++;
+                worker.stats.betaCutoffs++;
+                if (movesSearched == 0) worker.stats.firstMoveCutoffs++;
 
                 if (!move.isCapture()) {
                     int side = static_cast<int>(board.sideToMove());
-                    ws.history[side][move.start][move.end] += depth * depth;
+                    worker.history[side][move.start][move.end] += depth * depth;
 
-                    if (ws.history[side][move.start][move.end] > 10000000) {
-                        ws.history[side][move.start][move.end] /= 2;
+                    if (worker.history[side][move.start][move.end] > 10000000) {
+                        worker.history[side][move.start][move.end] /= 2;
+                    }
+
+                    if (plyFromRoot < MAX_PLY && !(move == worker.killers[plyFromRoot][0])) {
+                        worker.killers[plyFromRoot][1] = worker.killers[plyFromRoot][0];
+                        worker.killers[plyFromRoot][0] = move;
                     }
                 }
 
@@ -389,9 +387,9 @@ int Search::negamax(WorkerState& ws, Board& board, int depth, int alpha, int bet
     return bestScore;
 }
 
-int Search::quiescence(WorkerState& ws, Board& board, int alpha, int beta, int plyFromRoot) {
-    ws.stats.totalNodes++;
-    ws.stats.qNodes++;
+int Search::quiescence(WorkerState& worker, Board& board, int alpha, int beta, int plyFromRoot) {
+    worker.stats.totalNodes++;
+    worker.stats.qNodes++;
 
     if (plyFromRoot > 64) {
         return evaluator_.evaluate(board, board.sideToMove());
@@ -401,25 +399,46 @@ int Search::quiescence(WorkerState& ws, Board& board, int alpha, int beta, int p
     if (standPat >= beta) return beta;
     if (standPat > alpha) alpha = standPat;
 
-    auto allMoves = board.generatePseudoMoves();
+    MoveList captures;
+    board.generatePseudoMoves(captures);
 
-    std::vector<Move> captures;
-    captures.reserve(allMoves.size());
-
-    for (const auto& m : allMoves) {
-        if (m.isCapture() || m.type == MoveType::PROMOTION) {
-            captures.push_back(m);
+    // Compact captures/promotions in place; quiets are dropped.
+    int keptCount = 0;
+    for (int readIndex = 0; readIndex < captures.size(); ++readIndex) {
+        const Move& candidateMove = captures[readIndex];
+        if (candidateMove.isCapture() || candidateMove.type == MoveType::PROMOTION) {
+            captures.moves[keptCount++] = candidateMove;
         }
     }
+    captures.count = keptCount;
 
-    orderMoves(ws, board, captures, Move());
+    orderMoves(worker, board, captures.begin(), captures.size(), Move(), plyFromRoot);
+
+    // Delta pruning: material values for the best case a capture can gain.
+    static constexpr int pieceValues[] = {100, 320, 330, 500, 900, 20000};
+    constexpr int deltaMargin = 200;
 
     for (const auto& move : captures) {
+        // Skip captures whose best-case material swing still can't lift the
+        // stand-pat score to alpha.
+        int bestCaseGain = 0;
+        if (move.isCapture()) {
+            Board::PieceIndex victimPiece = board.getPieceAt(move.end);
+            bestCaseGain = (victimPiece < Board::PieceTypeCount) ? pieceValues[victimPiece]
+                                                                 : pieceValues[Board::PAWN];  // en passant
+        }
+        if (move.type == MoveType::PROMOTION) {
+            bestCaseGain += pieceValues[Board::QUEEN] - pieceValues[Board::PAWN];
+        }
+        if (standPat + bestCaseGain + deltaMargin <= alpha) {
+            continue;
+        }
+
         if (!board.makeMove(move)) {
             continue;
         }
 
-        int score = -quiescence(ws, board, -beta, -alpha, plyFromRoot + 1);
+        int score = -quiescence(worker, board, -beta, -alpha, plyFromRoot + 1);
 
         board.unmakeMove();
 
@@ -429,29 +448,50 @@ int Search::quiescence(WorkerState& ws, Board& board, int alpha, int beta, int p
     return alpha;
 }
 
-void Search::orderMoves(const WorkerState& ws, Board& board, std::vector<Move>& moves, const Move& ttMove) {
-    std::stable_sort(moves.begin(), moves.end(), [&](const Move& a, const Move& b) {
-        int scoreA = 0;
-        int scoreB = 0;
+void Search::orderMoves(const WorkerState& worker, const Board& board, Move* moves, int count, const Move& ttMove, int ply) {
+    // Score each move once, then stable insertion sort descending. The old
+    // stable_sort comparator recomputed both scores on every comparison.
+    int moveScores[MAX_MOVES];
+    const int sideToMoveIndex = static_cast<int>(board.sideToMove());
+    const bool haveTtMove = (ttMove.start != ttMove.end);
+    const Move* killerMoves = (ply < MAX_PLY) ? worker.killers[ply] : nullptr;
 
-        if (ttMove.start != ttMove.end) {
-            if (a.start == ttMove.start && a.end == ttMove.end) scoreA += 2000000;
-            if (b.start == ttMove.start && b.end == ttMove.end) scoreB += 2000000;
+    for (int moveIndex = 0; moveIndex < count; ++moveIndex) {
+        const Move& move = moves[moveIndex];
+        int score = 0;
+
+        if (haveTtMove && move.start == ttMove.start && move.end == ttMove.end) score += 2000000;
+
+        if (move.isCapture()) {
+            score += getMvvLvaScore(board, move) + 100000;
+        } else {
+            // Killer bonus sits just below captures, above ordinary history.
+            if (killerMoves) {
+                if (move == killerMoves[0]) score += 95000;
+                else if (move == killerMoves[1]) score += 94000;
+            }
+            score += worker.history[sideToMoveIndex][move.start][move.end];
         }
 
-        if (a.isCapture()) scoreA += getMvvLvaScore(board, a) + 100000;
-        if (b.isCapture()) scoreB += getMvvLvaScore(board, b) + 100000;
+        if (move.type == MoveType::PROMOTION) score += 90000;
 
-        if (a.type == MoveType::PROMOTION) scoreA += 90000;
-        if (b.type == MoveType::PROMOTION) scoreB += 90000;
+        moveScores[moveIndex] = score;
+    }
 
-        if (!a.isCapture()) {
-            scoreA += ws.history[static_cast<int>(board.sideToMove())][a.start][a.end];
+    for (int sortIndex = 1; sortIndex < count; ++sortIndex) {
+        Move currentMove = moves[sortIndex];
+        int currentScore = moveScores[sortIndex];
+        int scanIndex = sortIndex - 1;
+        while (scanIndex >= 0 && moveScores[scanIndex] < currentScore) {
+            moves[scanIndex + 1] = moves[scanIndex];
+            moveScores[scanIndex + 1] = moveScores[scanIndex];
+            --scanIndex;
         }
-        if (!b.isCapture()) {
-            scoreB += ws.history[static_cast<int>(board.sideToMove())][b.start][b.end];
-        }
+        moves[scanIndex + 1] = currentMove;
+        moveScores[scanIndex + 1] = currentScore;
+    }
+}
 
-        return scoreA > scoreB;
-    });
+void Search::orderMoves(const WorkerState& worker, const Board& board, MoveList& moves, const Move& ttMove, int ply) {
+    orderMoves(worker, board, moves.begin(), moves.size(), ttMove, ply);
 }

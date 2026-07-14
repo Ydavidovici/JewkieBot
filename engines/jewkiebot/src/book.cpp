@@ -9,33 +9,31 @@
 #include <bit>
 
 namespace {
+    constexpr int polyPiece(Board::PieceIndex pt, Color c) {
+        static_assert(Board::PAWN == 0 && Board::KNIGHT == 1 && Board::BISHOP == 2 &&
+                      Board::ROOK == 3 && Board::QUEEN == 4 && Board::KING == 5,
+                      "Board::PieceIndex enum values changed, polyglot piece hashing broken.");
+        // Polyglot: BP=0,WP=1,BN=2,WN=3,BB=4,WB=5,BR=6,WR=7,BQ=8,WQ=9,BK=10,WK=11
+        return 2 * static_cast<int>(pt) + (c == Color::WHITE ? 1 : 0);
+    }
 
-constexpr int polyPiece(Board::PieceIndex pt, Color c) {
-    static_assert(Board::PAWN == 0 && Board::KNIGHT == 1 && Board::BISHOP == 2 && 
-                  Board::ROOK == 3 && Board::QUEEN == 4 && Board::KING == 5,
-                  "Board::PieceIndex enum values changed, polyglot piece hashing broken.");
-    // Polyglot: BP=0,WP=1,BN=2,WN=3,BB=4,WB=5,BR=6,WR=7,BQ=8,WQ=9,BK=10,WK=11
-    return 2 * static_cast<int>(pt) + (c == Color::WHITE ? 1 : 0);
-}
+    uint64_t readBE64(const uint8_t* p) {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
+        return v;
+    }
 
-uint64_t readBE64(const uint8_t* p) {
-    uint64_t v = 0;
-    for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
-    return v;
-}
+    uint16_t readBE16(const uint8_t* p) {
+        return static_cast<uint16_t>((p[0] << 8) | p[1]);
+    }
 
-uint16_t readBE16(const uint8_t* p) {
-    return static_cast<uint16_t>((p[0] << 8) | p[1]);
-}
-
-uint32_t readBE32(const uint8_t* p) {
-    return (static_cast<uint32_t>(p[0]) << 24)
-         | (static_cast<uint32_t>(p[1]) << 16)
-         | (static_cast<uint32_t>(p[2]) << 8)
-         | static_cast<uint32_t>(p[3]);
-}
-
-}  // namespace
+    uint32_t readBE32(const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24)
+            | (static_cast<uint32_t>(p[1]) << 16)
+            | (static_cast<uint32_t>(p[2]) << 8)
+            | static_cast<uint32_t>(p[3]);
+    }
+} // namespace
 
 Book::Book() : rng_(std::random_device{}()) {}
 
@@ -85,23 +83,27 @@ uint64_t Book::polyglotKey(const Board& board) {
     return key;
 }
 
-Move Book::decodeMove(uint16_t raw, const Board& board, const std::vector<Move>& legal) {
-    int to_file   = (raw >> 0) & 0x7;
-    int to_row    = (raw >> 3) & 0x7;
+Move Book::decodeMove(uint16_t raw, const Board& board, const MoveList& legal) {
+    int to_file = (raw >> 0) & 0x7;
+    int to_row = (raw >> 3) & 0x7;
     int from_file = (raw >> 6) & 0x7;
-    int from_row  = (raw >> 9) & 0x7;
-    int promo     = (raw >> 12) & 0x7;
+    int from_row = (raw >> 9) & 0x7;
+    int promo = (raw >> 12) & 0x7;
 
     int from_sq = from_row * 8 + from_file;
-    int to_sq   = to_row * 8 + to_file;
+    int to_sq = to_row * 8 + to_file;
 
     char promo_char = '\0';
     switch (promo) {
-        case 1: promo_char = 'N'; break;
-        case 2: promo_char = 'B'; break;
-        case 3: promo_char = 'R'; break;
-        case 4: promo_char = 'Q'; break;
-        default: break;
+    case 1: promo_char = 'N';
+        break;
+    case 2: promo_char = 'B';
+        break;
+    case 3: promo_char = 'R';
+        break;
+    case 4: promo_char = 'Q';
+        break;
+    default: break;
     }
 
     // Polyglot encodes castling as king-takes-own-rook (e1h1, e1a1, e8h8, e8a8).
@@ -111,10 +113,14 @@ Move Book::decodeMove(uint16_t raw, const Board& board, const std::vector<Move>&
         (from_sq == 60 && (to_sq == 63 || to_sq == 56));
     if (castle_candidate && board.getPieceAt(from_sq) == Board::KING) {
         switch (to_sq) {
-            case 7:  to_sq = 6;  break;
-            case 0:  to_sq = 2;  break;
-            case 63: to_sq = 62; break;
-            case 56: to_sq = 58; break;
+        case 7: to_sq = 6;
+            break;
+        case 0: to_sq = 2;
+            break;
+        case 63: to_sq = 62;
+            break;
+        case 56: to_sq = 58;
+            break;
         }
     }
 
@@ -147,10 +153,10 @@ bool Book::load(const std::string& path) {
     entries_.resize(count);
     for (std::size_t i = 0; i < count; ++i) {
         const uint8_t* p = buf.data() + i * 16;
-        entries_[i].key    = readBE64(p);
-        entries_[i].move   = readBE16(p + 8);
+        entries_[i].key = readBE64(p);
+        entries_[i].move = readBE16(p + 8);
         entries_[i].weight = readBE16(p + 10);
-        entries_[i].learn  = readBE32(p + 12);
+        entries_[i].learn = readBE32(p + 12);
     }
 
     // Polyglot books are required to be sorted by key. Sort defensively in
@@ -174,7 +180,10 @@ std::vector<std::pair<Move, uint16_t>> Book::gatherLegal(uint64_t key, const Boa
     auto lo = std::lower_bound(entries_.begin(), entries_.end(), key, cmp);
 
     std::vector<std::pair<Move, uint16_t>> out;
-    auto legalMoves = board.generateLegalMoves();
+
+    MoveList legalMoves;
+    board.generateLegalMoves(legalMoves);
+
     for (auto it = lo; it != entries_.end() && it->key == key; ++it) {
         Move m = decodeMove(it->move, board, legalMoves);
         if (m.isValid()) out.emplace_back(m, it->weight);

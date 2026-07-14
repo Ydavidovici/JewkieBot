@@ -18,8 +18,9 @@ public:
     explicit Board(const std::string& fenString) { loadFEN(fenString); }
 
     std::string toFEN() const;
-    std::vector<Move> generatePseudoMoves() const;
-    std::vector<Move> generateLegalMoves() const;
+
+    void generatePseudoMoves(MoveList& out) const;
+    void generateLegalMoves(MoveList& out) const;
 
     bool makeMove(const Move& move);
     void unmakeMove();
@@ -36,10 +37,10 @@ public:
     bool isThreefoldRepetition() const;
     bool isInsufficientMaterial() const;
 
-    uint64_t occupancy(Color color) const;
+    uint64_t occupancy(Color color) const {return occupancy_[color == Color::WHITE ? 0 : 1];}
     uint64_t pieceBB(Color color, PieceIndex pieceIndex) const;
     Color sideToMove() const {return side_to_move;}
-    PieceIndex getPieceAt(int square) const;
+    PieceIndex getPieceAt(int square) const {return static_cast<PieceIndex>(mailbox_[square]);}
 
     uint64_t zobristKey() const {return current_zobrist_key;}
 
@@ -51,6 +52,12 @@ public:
 private:
     std::array<uint64_t, PieceTypeCount> white_bitboards{};
     std::array<uint64_t, PieceTypeCount> black_bitboards{};
+
+    // Derived state, kept in sync incrementally by make/unmake:
+    // per-color occupancy and a piece-type-at-square mailbox
+    // (PieceTypeCount == empty; color comes from occupancy_).
+    std::array<uint64_t, 2> occupancy_{};
+    std::array<uint8_t, 64> mailbox_{};
 
     Color side_to_move;
     uint8_t castling_rights{};
@@ -91,6 +98,7 @@ private:
     bool isSquareAttacked(int squareIndex, Color attackingColor) const;
     int findKing(Color color) const;
     static uint64_t calculateZobristKey(const Board& board);
+    void rebuildDerived();
 
     void printFENString() const;
     void printPseudoLegalMoves() const;

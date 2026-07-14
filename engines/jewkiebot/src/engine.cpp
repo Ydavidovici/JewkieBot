@@ -49,7 +49,8 @@ int Engine::evaluateCurrentPosition() {
 bool Engine::applyMove(const std::string& moveStr) {
     Move parsed_move = Move::fromUCI(moveStr);
 
-    std::vector<Move> legal_moves = board.generateLegalMoves();
+    MoveList legal_moves;
+    board.generateLegalMoves(legal_moves);
 
     for (const Move& legal_move : legal_moves) {
         if (legal_move.start == parsed_move.start &&

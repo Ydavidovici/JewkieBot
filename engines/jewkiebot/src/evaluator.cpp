@@ -10,30 +10,21 @@ Evaluator::Evaluator() {
 int Evaluator::evaluate(const Board& board, Color sideToMove) const {
     int score = 0;
 
-    auto evalPieceType = [&](const std::array<int, 64>& whiteTable, const std::array<int, 64>& blackTable, Board::PieceIndex pieceTable) {
-        int value = pieceValues[pieceTable];
+    for (int pieceIndex = 0; pieceIndex < PST_COUNT; ++pieceIndex) {
+        auto piece = static_cast<Board::PieceIndex>(pieceIndex);
 
-        uint64_t whiteBitBoard = board.pieceBB(Color::WHITE, pieceTable);
+        uint64_t whiteBitBoard = board.pieceBB(Color::WHITE, piece);
         while (whiteBitBoard) {
-            int square = __builtin_ctzll(whiteBitBoard);
-            score += (value + whiteTable[square]);
+            score += combinedTables[0][pieceIndex][__builtin_ctzll(whiteBitBoard)];
             whiteBitBoard &= whiteBitBoard - 1;
         }
 
-        uint64_t blackBitBoard = board.pieceBB(Color::BLACK, pieceTable);
+        uint64_t blackBitBoard = board.pieceBB(Color::BLACK, piece);
         while (blackBitBoard) {
-            int square = __builtin_ctzll(blackBitBoard);
-            score -= (value + blackTable[square]);
+            score -= combinedTables[1][pieceIndex][__builtin_ctzll(blackBitBoard)];
             blackBitBoard &= blackBitBoard - 1;
         }
-    };
-
-    evalPieceType(whitePawnTable, blackPawnTable, Board::PAWN);
-    evalPieceType(whiteKnightTable, blackKnightTable, Board::KNIGHT);
-    evalPieceType(whiteBishopTable, blackBishopTable, Board::BISHOP);
-    evalPieceType(whiteRookTable, blackRookTable, Board::ROOK);
-    evalPieceType(whiteQueenTable, blackQueenTable, Board::QUEEN);
-    evalPieceType(whiteKingTableMG, blackKingTableMG, Board::KING);
+    }
 
     return (sideToMove == Color::WHITE ? score : -score);
 }
@@ -223,4 +214,20 @@ void Evaluator::updateBlackTables() {
     mirror(whiteQueenTable, blackQueenTable);
     mirror(whiteKingTableMG, blackKingTableMG);
     mirror(whiteKingTableEG, blackKingTableEG);
+
+    const std::array<int, 64>* whiteTables[PST_COUNT] = {
+        &whitePawnTable, &whiteKnightTable, &whiteBishopTable,
+        &whiteRookTable, &whiteQueenTable, &whiteKingTableMG
+    };
+    const std::array<int, 64>* blackTables[PST_COUNT] = {
+        &blackPawnTable, &blackKnightTable, &blackBishopTable,
+        &blackRookTable, &blackQueenTable, &blackKingTableMG
+    };
+
+    for (int pieceIndex = 0; pieceIndex < PST_COUNT; ++pieceIndex) {
+        for (int squareIndex = 0; squareIndex < 64; ++squareIndex) {
+            combinedTables[0][pieceIndex][squareIndex] = pieceValues[pieceIndex] + (*whiteTables[pieceIndex])[squareIndex];
+            combinedTables[1][pieceIndex][squareIndex] = pieceValues[pieceIndex] + (*blackTables[pieceIndex])[squareIndex];
+        }
+    }
 }

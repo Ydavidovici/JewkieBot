@@ -60,7 +60,8 @@ struct Stat {
 
 static uint64_t perft(Board& b, int depth) {
 	if (depth == 0) return 1;
-	auto moves = b.generateLegalMoves();
+	MoveList moves;
+	b.generateLegalMoves(moves);
 	if (depth == 1) return moves.size();
 	uint64_t total = 0;
 	for (const Move& m : moves) {
@@ -117,13 +118,15 @@ static void bench_movegen() {
 		Board b;
 		b.loadFEN(p.fen);
 		for (int i = 0; i < WARMUP; ++i) {
-			auto v = b.generateLegalMoves();
+			MoveList v;
+			b.generateLegalMoves(v);
 			(void)v;
 		}
 		size_t moves_total = 0;
 		auto t0 = Clock::now();
 		for (int i = 0; i < ITERS; ++i) {
-			auto v = b.generateLegalMoves();
+			MoveList v;
+			b.generateLegalMoves(v);
 			moves_total += v.size();
 		}
 		double ms = elapsed_ms(t0);
@@ -144,7 +147,8 @@ static void bench_make_unmake() {
 	for (const auto& p : POSITIONS) {
 		Board b;
 		b.loadFEN(p.fen);
-		auto moves = b.generateLegalMoves();
+		MoveList moves;
+		b.generateLegalMoves(moves);
 		if (moves.empty()) continue;
 		auto t0 = Clock::now();
 		for (int i = 0; i < ITERS; ++i) {
