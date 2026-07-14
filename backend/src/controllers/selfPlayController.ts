@@ -319,6 +319,7 @@ export class SelfPlayController {
             emitter: new EventEmitter(),
         };
         state.emitter.setMaxListeners(0);
+        state.emitter.on("error", () => {});
         this.runs.set(taskId, state);
 
         try {
