@@ -15,9 +15,18 @@ public:
 
     Board();
     void loadFEN(const std::string& fenString);
-    explicit Board(const std::string& fenString) { loadFEN(fenString); }
+    explicit Board(const std::string& fenString) {
+        initStaticTables();
+        loadFEN(fenString);
+    }
 
     std::string toFEN() const;
+
+    // Allocation-free generators used by the search hot path.
+    void generatePseudoMoves(MoveList& out) const;
+    void generateLegalMoves(MoveList& out) const;
+
+    // Convenience wrappers for callers that want a vector (tests, book, UI).
     std::vector<Move> generatePseudoMoves() const;
     std::vector<Move> generateLegalMoves() const;
 
@@ -34,6 +43,10 @@ public:
     bool isStalemate(Color color) const;
     bool isFiftyMoveDraw() const;
     bool isThreefoldRepetition() const;
+    // Two-fold repetition: true as soon as the current position occurred once
+    // before. The search treats that as a draw (a side that can repeat once
+    // can repeat twice), which avoids repetition blindness at the horizon.
+    bool isRepetitionDraw() const;
     bool isInsufficientMaterial() const;
 
     uint64_t occupancy(Color color) const;
@@ -66,6 +79,12 @@ private:
     static uint64_t side_key;
     static std::once_flag zobrist_once_flag_;
 
+    // Precomputed leaper attacks: knight_attacks[sq], king_attacks[sq], and
+    // pawn_attacks[color][sq] = squares a pawn of `color` on `sq` attacks.
+    static uint64_t knight_attacks[64];
+    static uint64_t king_attacks[64];
+    static uint64_t pawn_attacks[2][64];
+
     struct Undo {
         uint8_t castling_rights;
         int en_passant_square_index;
@@ -91,6 +110,7 @@ private:
     bool isSquareAttacked(int squareIndex, Color attackingColor) const;
     int findKing(Color color) const;
     static uint64_t calculateZobristKey(const Board& board);
+    static void initStaticTables();
 
     void printFENString() const;
     void printPseudoLegalMoves() const;

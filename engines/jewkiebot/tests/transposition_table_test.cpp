@@ -169,9 +169,8 @@ static void test_same_key_equal_depth_updates() {
 static void test_collision_deeper_wins() {
 	std::cout << "--- test_collision_deeper_wins ---\n";
 	TranspositionTable tt(1);
-	size_t numEntries = (1ULL * 1024 * 1024) / sizeof(TranspositionTable::TTEntry);
 	uint64_t key1 = 0x100;
-	uint64_t key2 = key1 + numEntries;
+	uint64_t key2 = key1 + tt.entryCount();
 
 	tt.store(key1, 50, 3, mv("e2e4"), TranspositionTable::EXACT);
 	tt.store(key2, 80, 6, mv("d2d4"), TranspositionTable::EXACT);
@@ -189,9 +188,8 @@ static void test_collision_deeper_wins() {
 static void test_collision_shallower_does_not_evict_deeper() {
 	std::cout << "--- test_collision_shallower_does_not_evict_deeper ---\n";
 	TranspositionTable tt(1);
-	size_t numEntries = (1ULL * 1024 * 1024) / sizeof(TranspositionTable::TTEntry);
 	uint64_t key1 = 0x200;
-	uint64_t key2 = key1 + numEntries;
+	uint64_t key2 = key1 + tt.entryCount();
 
 	tt.store(key1, 90, 8, mv("g1f3"), TranspositionTable::EXACT);
 	tt.store(key2, 20, 2, mv("c2c4"), TranspositionTable::LOWERBOUND);

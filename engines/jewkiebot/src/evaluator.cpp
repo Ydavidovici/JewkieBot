@@ -1,7 +1,6 @@
 #include "evaluator.h"
 #include <algorithm>
-
-static constexpr int MATE_SCORE = 100000;
+#include <bit>
 
 Evaluator::Evaluator() {
     initializePieceSquareTables();
@@ -33,7 +32,41 @@ int Evaluator::evaluate(const Board& board, Color sideToMove) const {
     evalPieceType(whiteBishopTable, blackBishopTable, Board::BISHOP);
     evalPieceType(whiteRookTable, blackRookTable, Board::ROOK);
     evalPieceType(whiteQueenTable, blackQueenTable, Board::QUEEN);
-    evalPieceType(whiteKingTableMG, blackKingTableMG, Board::KING);
+
+    // Tapered king evaluation: blend the middlegame table (castled safety)
+    // into the endgame table (centralization) as material comes off.
+    // Phase weights: N=1, B=1, R=2, Q=4; 24 = all pieces on the board.
+    constexpr int PHASE_MAX = 24;
+    int phase =
+        std::popcount(board.pieceBB(Color::WHITE, Board::KNIGHT)) +
+        std::popcount(board.pieceBB(Color::BLACK, Board::KNIGHT)) +
+        std::popcount(board.pieceBB(Color::WHITE, Board::BISHOP)) +
+        std::popcount(board.pieceBB(Color::BLACK, Board::BISHOP)) +
+        2 * std::popcount(board.pieceBB(Color::WHITE, Board::ROOK)) +
+        2 * std::popcount(board.pieceBB(Color::BLACK, Board::ROOK)) +
+        4 * std::popcount(board.pieceBB(Color::WHITE, Board::QUEEN)) +
+        4 * std::popcount(board.pieceBB(Color::BLACK, Board::QUEEN));
+    phase = std::min(phase, PHASE_MAX);
+
+    int kingValue = pieceValues[Board::KING];
+
+    uint64_t whiteKing = board.pieceBB(Color::WHITE, Board::KING);
+    while (whiteKing) {
+        int square = __builtin_ctzll(whiteKing);
+        int pst = (whiteKingTableMG[square] * phase +
+                   whiteKingTableEG[square] * (PHASE_MAX - phase)) / PHASE_MAX;
+        score += kingValue + pst;
+        whiteKing &= whiteKing - 1;
+    }
+
+    uint64_t blackKing = board.pieceBB(Color::BLACK, Board::KING);
+    while (blackKing) {
+        int square = __builtin_ctzll(blackKing);
+        int pst = (blackKingTableMG[square] * phase +
+                   blackKingTableEG[square] * (PHASE_MAX - phase)) / PHASE_MAX;
+        score -= kingValue + pst;
+        blackKing &= blackKing - 1;
+    }
 
     return (sideToMove == Color::WHITE ? score : -score);
 }

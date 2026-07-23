@@ -14,28 +14,81 @@ uint64_t Board::castling_keys[16];
 uint64_t Board::side_key;
 std::once_flag Board::zobrist_once_flag_;
 
-Board::Board() {
-    // init zobrist
-    std::call_once(zobrist_once_flag_, []() {
-        std::mt19937_64 rng(123456789);
-        std::uniform_int_distribution<uint64_t> dist;
+uint64_t Board::knight_attacks[64];
+uint64_t Board::king_attacks[64];
+uint64_t Board::pawn_attacks[2][64];
 
-        for (int p = 0; p < 12; ++p) {
-            for (int sq = 0; sq < 64; ++sq) {
-                piece_keys[p][sq] = dist(rng);
-            }
-        }
+// Zobrist keys and leaper attack tables. Called from every constructor so a
+// Board built directly from a FEN string is initialized too.
+static void initBoardTablesImpl(uint64_t piece_keys[12][64],
+                                uint64_t en_passant_keys[64],
+                                uint64_t castling_keys[16],
+                                uint64_t& side_key,
+                                uint64_t knight_attacks[64],
+                                uint64_t king_attacks[64],
+                                uint64_t pawn_attacks[2][64]) {
+    std::mt19937_64 rng(123456789);
+    std::uniform_int_distribution<uint64_t> dist;
 
+    for (int p = 0; p < 12; ++p) {
         for (int sq = 0; sq < 64; ++sq) {
-            en_passant_keys[sq] = dist(rng);
+            piece_keys[p][sq] = dist(rng);
         }
+    }
 
-        for (int c = 0; c < 16; ++c) {
-            castling_keys[c] = dist(rng);
+    for (int sq = 0; sq < 64; ++sq) {
+        en_passant_keys[sq] = dist(rng);
+    }
+
+    for (int c = 0; c < 16; ++c) {
+        castling_keys[c] = dist(rng);
+    }
+
+    side_key = dist(rng);
+
+    static const int knight_deltas[8][2] = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
+    static const int king_deltas[8][2] = {{-1,-1},{-1,0},{-1,1},{0,-1},{0,1},{1,-1},{1,0},{1,1}};
+
+    for (int sq = 0; sq < 64; ++sq) {
+        int rank = sq / 8;
+        int file = sq % 8;
+
+        uint64_t knight_bb = 0;
+        for (auto& d : knight_deltas) {
+            int r = rank + d[0], f = file + d[1];
+            if (r >= 0 && r < 8 && f >= 0 && f < 8) knight_bb |= 1ULL << (r * 8 + f);
         }
+        knight_attacks[sq] = knight_bb;
 
-        side_key = dist(rng);
+        uint64_t king_bb = 0;
+        for (auto& d : king_deltas) {
+            int r = rank + d[0], f = file + d[1];
+            if (r >= 0 && r < 8 && f >= 0 && f < 8) king_bb |= 1ULL << (r * 8 + f);
+        }
+        king_attacks[sq] = king_bb;
+
+        uint64_t white_pawn_bb = 0;
+        uint64_t black_pawn_bb = 0;
+        for (int df : {-1, 1}) {
+            int f = file + df;
+            if (f < 0 || f > 7) continue;
+            if (rank + 1 < 8) white_pawn_bb |= 1ULL << ((rank + 1) * 8 + f);
+            if (rank - 1 >= 0) black_pawn_bb |= 1ULL << ((rank - 1) * 8 + f);
+        }
+        pawn_attacks[static_cast<int>(Color::WHITE)][sq] = white_pawn_bb;
+        pawn_attacks[static_cast<int>(Color::BLACK)][sq] = black_pawn_bb;
+    }
+}
+
+void Board::initStaticTables() {
+    std::call_once(zobrist_once_flag_, []() {
+        initBoardTablesImpl(piece_keys, en_passant_keys, castling_keys, side_key,
+                            knight_attacks, king_attacks, pawn_attacks);
     });
+}
+
+Board::Board() {
+    initStaticTables();
 
     // init board itself
     white_bitboards.fill(0);
@@ -62,10 +115,9 @@ Board::Board() {
     fullmove_number = 1;
 
     move_history.clear();
+    move_history.reserve(512);
 
     current_zobrist_key = calculateZobristKey(*this);
-
-    // std::cout << "[DEBUG] Initial Zobrist Key: " << current_zobrist_key << std::endl;
 }
 
 uint64_t Board::calculateZobristKey(const Board& board) {
@@ -177,6 +229,7 @@ void Board::loadFEN(const std::string& fenString) {
     }
 
     move_history.clear();
+    move_history.reserve(512);
 
     current_zobrist_key = calculateZobristKey(*this);
 }
@@ -260,8 +313,8 @@ uint64_t Board::pieceBB(Color color, PieceIndex pieceIndex) const {
     return (color == Color::WHITE ? white_bitboards[pieceIndex] : black_bitboards[pieceIndex]);
 }
 
-std::vector<Move> Board::generatePseudoMoves() const {
-    std::vector<Move> move_list;
+void Board::generatePseudoMoves(MoveList& move_list) const {
+    move_list.clear();
 
     Color us_color = side_to_move;
 
@@ -285,65 +338,55 @@ std::vector<Move> Board::generatePseudoMoves() const {
         if (inBounds(one_step_square_index) && !(all_occupancy & (1ULL << one_step_square_index))) {
             if (one_step_square_index / 8 == promotion_rank_index) {
                 for (char promotion_piece : {'Q', 'R', 'B', 'N'})
-                    move_list.emplace_back(pawn_square_index, one_step_square_index, MoveType::PROMOTION, promotion_piece);
+                    move_list.push_back(Move(pawn_square_index, one_step_square_index, MoveType::PROMOTION, promotion_piece));
             }
             else {
-                move_list.emplace_back(pawn_square_index, one_step_square_index);
+                move_list.push_back(Move(pawn_square_index, one_step_square_index));
 
                 if (pawn_square_index / 8 == starting_rank_index) {
                     int two_step_square_index = pawn_square_index + 2 * forward_direction;
                     if (inBounds(two_step_square_index) && !(all_occupancy & (1ULL << two_step_square_index)))
-                        move_list.emplace_back(pawn_square_index, two_step_square_index);
+                        move_list.push_back(Move(pawn_square_index, two_step_square_index));
                 }
             }
         }
 
-        for (int capture_offset : {forward_direction - 1, forward_direction + 1}) {
-            int capture_square_index = pawn_square_index + capture_offset;
-            if (!inBounds(capture_square_index)) continue;
+        uint64_t capture_targets = pawn_attacks[static_cast<int>(us_color)][pawn_square_index];
+        uint64_t scan_captures = capture_targets & opponent_occupancy;
+        while (scan_captures) {
+            int capture_square_index = std::countr_zero(scan_captures);
+            scan_captures &= scan_captures - 1;
 
-            int from_file = pawn_square_index % 8;
-            int to_file = capture_square_index % 8;
-            if (std::abs(to_file - from_file) != 1) continue;
+            if (capture_square_index / 8 == promotion_rank_index) {
+                for (char promotion_piece : {'Q', 'R', 'B', 'N'})
+                    move_list.push_back(Move(pawn_square_index, capture_square_index, MoveType::PROMOTION, promotion_piece));
+            }
+            else {
+                move_list.push_back(Move(pawn_square_index, capture_square_index, MoveType::CAPTURE));
+            }
+        }
 
-            if (opponent_occupancy & (1ULL << capture_square_index)) {
-                if (capture_square_index / 8 == promotion_rank_index) {
-                    for (char promotion_piece : {'Q', 'R', 'B', 'N'})
-                        move_list.emplace_back(pawn_square_index, capture_square_index, MoveType::PROMOTION, promotion_piece);
-                }
-                else {
-                    move_list.emplace_back(pawn_square_index, capture_square_index, MoveType::CAPTURE);
-                }
-            }
-            else if (capture_square_index == en_passant_square_index) {
-                move_list.emplace_back(pawn_square_index, capture_square_index, MoveType::EN_PASSANT);
-            }
+        if (en_passant_square_index != -1 &&
+            (capture_targets & (1ULL << en_passant_square_index))) {
+            move_list.push_back(Move(pawn_square_index, en_passant_square_index, MoveType::EN_PASSANT));
         }
     }
 
-    static const int knight_directions[8] = {-17, -15, -10, -6, 6, 10, 15, 17};
     uint64_t knight_bitboard = (us_color == Color::WHITE ? white_bitboards[KNIGHT] : black_bitboards[KNIGHT]);
     uint64_t scan_knights = knight_bitboard;
     while (scan_knights) {
         int knight_square_index = std::countr_zero(scan_knights);
         scan_knights &= scan_knights - 1;
 
-        for (int direction : knight_directions) {
-            int target_square_index = knight_square_index + direction;
-            if (!inBounds(target_square_index)) continue;
+        uint64_t targets = knight_attacks[knight_square_index] & ~own_occupancy;
+        while (targets) {
+            int target_square_index = std::countr_zero(targets);
+            targets &= targets - 1;
 
-            int file_difference = std::abs((target_square_index % 8) - (knight_square_index % 8));
-            int rank_difference = std::abs((target_square_index / 8) - (knight_square_index / 8));
-            bool is_knight_shape = (file_difference == 1 && rank_difference == 2) ||
-                (file_difference == 2 && rank_difference == 1);
-            if (!is_knight_shape) continue;
-
-            if (!(own_occupancy & (1ULL << target_square_index))) {
-                MoveType move_type = (opponent_occupancy & (1ULL << target_square_index))
-                                         ? MoveType::CAPTURE
-                                         : MoveType::NORMAL;
-                move_list.emplace_back(knight_square_index, target_square_index, move_type);
-            }
+            MoveType move_type = (opponent_occupancy & (1ULL << target_square_index))
+                                     ? MoveType::CAPTURE
+                                     : MoveType::NORMAL;
+            move_list.push_back(Move(knight_square_index, target_square_index, move_type));
         }
     }
 
@@ -376,11 +419,11 @@ std::vector<Move> Board::generatePseudoMoves() const {
                         break;
 
                     if (opponent_occupancy & (1ULL << target_square_index)) {
-                        move_list.emplace_back(from_square_index, target_square_index, MoveType::CAPTURE);
+                        move_list.push_back(Move(from_square_index, target_square_index, MoveType::CAPTURE));
                         break;
                     }
 
-                    move_list.emplace_back(from_square_index, target_square_index, MoveType::NORMAL);
+                    move_list.push_back(Move(from_square_index, target_square_index, MoveType::NORMAL));
                 }
             }
         }
@@ -398,41 +441,35 @@ std::vector<Move> Board::generatePseudoMoves() const {
     slidePieces((us_color == Color::WHITE ? white_bitboards[QUEEN] : black_bitboards[QUEEN]), rook_file_directions, rook_rank_directions, 4);
     slidePieces((us_color == Color::WHITE ? white_bitboards[QUEEN] : black_bitboards[QUEEN]), bishop_file_directions, bishop_rank_directions, 4);
 
-    static const int king_directions[8] = {-9, -8, -7, -1, 1, 7, 8, 9};
     uint64_t king_bitboard = (us_color == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
     uint64_t scan_kings = king_bitboard;
     while (scan_kings) {
         int king_square_index = std::countr_zero(scan_kings);
         scan_kings &= scan_kings - 1;
 
-        for (int direction : king_directions) {
-            int target_square_index = king_square_index + direction;
-            if (!inBounds(target_square_index)) continue;
+        uint64_t targets = king_attacks[king_square_index] & ~own_occupancy;
+        while (targets) {
+            int target_square_index = std::countr_zero(targets);
+            targets &= targets - 1;
 
-            int from_file = king_square_index % 8;
-            int to_file = target_square_index % 8;
-            if (std::abs(to_file - from_file) > 1) continue;
-
-            if (!(own_occupancy & (1ULL << target_square_index))) {
-                MoveType move_type = (opponent_occupancy & (1ULL << target_square_index))
-                                         ? MoveType::CAPTURE
-                                         : MoveType::NORMAL;
-                move_list.emplace_back(king_square_index, target_square_index, move_type);
-            }
+            MoveType move_type = (opponent_occupancy & (1ULL << target_square_index))
+                                     ? MoveType::CAPTURE
+                                     : MoveType::NORMAL;
+            move_list.push_back(Move(king_square_index, target_square_index, move_type));
         }
     }
 
     if (us_color == Color::WHITE) {
         if ((castling_rights & 0b0001) && !(all_occupancy & ((1ULL << 5) | (1ULL << 6))))
-            move_list.emplace_back(4, 6, MoveType::CASTLE_KINGSIDE);
+            move_list.push_back(Move(4, 6, MoveType::CASTLE_KINGSIDE));
         if ((castling_rights & 0b0010) && !(all_occupancy & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))))
-            move_list.emplace_back(4, 2, MoveType::CASTLE_QUEENSIDE);
+            move_list.push_back(Move(4, 2, MoveType::CASTLE_QUEENSIDE));
     }
     else {
         if ((castling_rights & 0b0100) && !(all_occupancy & ((1ULL << 61) | (1ULL << 62))))
-            move_list.emplace_back(60, 62, MoveType::CASTLE_KINGSIDE);
+            move_list.push_back(Move(60, 62, MoveType::CASTLE_KINGSIDE));
         if ((castling_rights & 0b1000) && !(all_occupancy & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))))
-            move_list.emplace_back(60, 58, MoveType::CASTLE_QUEENSIDE);
+            move_list.push_back(Move(60, 58, MoveType::CASTLE_QUEENSIDE));
     }
 
 #ifndef NDEBUG
@@ -444,7 +481,12 @@ std::vector<Move> Board::generatePseudoMoves() const {
             parsed_move.promo == move.promo);
     }
 #endif
-    return move_list;
+}
+
+std::vector<Move> Board::generatePseudoMoves() const {
+    MoveList list;
+    generatePseudoMoves(list);
+    return std::vector<Move>(list.begin(), list.end());
 }
 
 int Board::findKing(Color color) const {
@@ -458,35 +500,14 @@ bool Board::isSquareAttacked(int squareIndex, Color attackingColor) const {
     uint64_t black_occupancy = occupancy(Color::BLACK);
     uint64_t all_occupancy = white_occupancy | black_occupancy;
 
-    if (attackingColor == Color::WHITE) {
-        for (int pawn_offset : {-7, -9}) {
-            int pawn_square_index = squareIndex + pawn_offset;
-            if (!inBounds(pawn_square_index)) continue;
-            int file_difference = std::abs((pawn_square_index % 8) - (squareIndex % 8));
-            if (file_difference != 1) continue;
-            if (white_bitboards[PAWN] & (1ULL << pawn_square_index)) return true;
-        }
-    }
-    else {
-        for (int pawn_offset : {7, 9}) {
-            int pawn_square_index = squareIndex + pawn_offset;
-            if (!inBounds(pawn_square_index)) continue;
-            int file_difference = std::abs((pawn_square_index % 8) - (squareIndex % 8));
-            if (file_difference != 1) continue;
-            if (black_bitboards[PAWN] & (1ULL << pawn_square_index)) return true;
-        }
-    }
+    // A pawn of `attackingColor` attacks squareIndex exactly when a pawn of
+    // the *defending* color on squareIndex would attack the pawn's square.
+    Color defending_color = (attackingColor == Color::WHITE ? Color::BLACK : Color::WHITE);
+    uint64_t attacking_pawns = (attackingColor == Color::WHITE ? white_bitboards[PAWN] : black_bitboards[PAWN]);
+    if (pawn_attacks[static_cast<int>(defending_color)][squareIndex] & attacking_pawns) return true;
 
-    static const int knight_directions[8] = {-17, -15, -10, -6, 6, 10, 15, 17};
     uint64_t knight_bitboard = (attackingColor == Color::WHITE ? white_bitboards[KNIGHT] : black_bitboards[KNIGHT]);
-
-    for (int direction : knight_directions) {
-        int knight_square_index = squareIndex + direction;
-        if (!inBounds(knight_square_index)) continue;
-        int file_difference = std::abs((knight_square_index % 8) - (squareIndex % 8));
-        if (file_difference > 2) continue;
-        if (knight_bitboard & (1ULL << knight_square_index)) return true;
-    }
+    if (knight_attacks[squareIndex] & knight_bitboard) return true;
 
     static const int bishop_directions[4] = {-9, -7, 7, 9};
     uint64_t bishop_like_bitboard =
@@ -541,34 +562,29 @@ bool Board::isSquareAttacked(int squareIndex, Color attackingColor) const {
         }
     }
 
-    static const int king_directions[8] = {-9, -8, -7, -1, 1, 7, 8, 9};
-    uint64_t king_bitboard =(attackingColor == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
-
-    for (int direction : king_directions) {
-        int king_square_index = squareIndex + direction;
-        if (!inBounds(king_square_index)) continue;
-
-        int file_difference = std::abs((king_square_index % 8) - (squareIndex % 8));
-        int rank_difference = std::abs((king_square_index / 8) - (squareIndex / 8));
-        if (file_difference > 1 || rank_difference > 1) continue;
-
-        if (king_bitboard & (1ULL << king_square_index)) return true;
-    }
+    uint64_t king_bitboard = (attackingColor == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
+    if (king_attacks[squareIndex] & king_bitboard) return true;
 
     return false;
 }
 
-std::vector<Move> Board::generateLegalMoves() const {
-    std::vector<Move> pseudo_moves = generatePseudoMoves();
+void Board::generateLegalMoves(MoveList& legal_moves) const {
+    MoveList pseudo_moves;
+    generatePseudoMoves(pseudo_moves);
 
-    if (!pieceBB(side_to_move, KING))
-        return pseudo_moves;
+    if (!pieceBB(side_to_move, KING)) {
+        legal_moves = pseudo_moves;
+        return;
+    }
 
-    std::vector<Move> legal_moves;
-    legal_moves.reserve(pseudo_moves.size());
+    legal_moves.clear();
 
     Color opponent_color = (side_to_move == Color::WHITE ? Color::BLACK : Color::WHITE);
     uint64_t opponent_king_bitboard = pieceBB(opponent_color, KING);
+
+    // makeMove/unmakeMove restore the position exactly, so legality testing
+    // can run on this board directly instead of deep-copying it per move.
+    Board& self = const_cast<Board&>(*this);
 
     for (const auto& move : pseudo_moves) {
         if (opponent_king_bitboard & (1ULL << move.end))
@@ -583,12 +599,17 @@ std::vector<Move> Board::generateLegalMoves() const {
             if (isSquareAttacked(king_middle_square, opponent_color)) continue;
         }
 
-        Board board_copy = *this;
-        if (board_copy.makeMove(move))
+        if (self.makeMove(move)) {
+            self.unmakeMove();
             legal_moves.push_back(move);
+        }
     }
+}
 
-    return legal_moves;
+std::vector<Move> Board::generateLegalMoves() const {
+    MoveList list;
+    generateLegalMoves(list);
+    return std::vector<Move>(list.begin(), list.end());
 }
 
 bool Board::makeMove(const Move& move) {
@@ -694,10 +715,8 @@ bool Board::makeMove(const Move& move) {
                  : black_bitboards[promotion_piece_index]);
             setBit(promotion_bitboard, move.end);
 
-            // std::cout << "[makeMove] PROMOTION to "
             //     << (int)promotion_piece_index
             //     << " at " << move.end << "\n";
-            // std::cout.flush();
         }
         else {
             setBit(moved_piece_bitboard, move.end);
@@ -707,16 +726,12 @@ bool Board::makeMove(const Move& move) {
     if (moved_piece_index == KING) {
         if (us_color == Color::WHITE) castling_rights &= 0b1100;
         else castling_rights &= 0b0011;
-        // std::cout << "[makeMove] King moved: castling_rights=" << (int)castling_rights << "\n";
-        // std::cout.flush();
     }
     else if (moved_piece_index == ROOK) {
         if (move.start == 0) castling_rights &= 0b1101;
         if (move.start == 7) castling_rights &= 0b1110;
         if (move.start == 56) castling_rights &= 0b0111;
         if (move.start == 63) castling_rights &= 0b1011;
-        // std::cout << "[makeMove] Rook moved: castling_rights=" << (int)castling_rights << "\n";
-        // std::cout.flush();
     }
 
     if (captured_piece_index == ROOK) {
@@ -724,8 +739,6 @@ bool Board::makeMove(const Move& move) {
         if (move.end == 7) castling_rights &= 0b1110;
         if (move.end == 56) castling_rights &= 0b0111;
         if (move.end == 63) castling_rights &= 0b1011;
-        // std::cout << "[makeMove] Rook captured: castling_rights=" << (int)castling_rights << "\n";
-        // std::cout.flush();
     }
 
     en_passant_square_index = -1;
@@ -733,9 +746,7 @@ bool Board::makeMove(const Move& move) {
         std::abs((move.end / 8) - (move.start / 8)) == 2) {
         en_passant_square_index = (move.start + move.end) / 2;
         undo_entry.is_pawn_double_push = true;
-        // std::cout << "[makeMove] Pawn double push, ep_square="
         //     << en_passant_square_index << "\n";
-        // std::cout.flush();
     }
 
     if (moved_piece_index == PAWN || captured_piece_index != PieceTypeCount) {
@@ -748,12 +759,9 @@ bool Board::makeMove(const Move& move) {
     if (us_color == Color::BLACK)
         ++fullmove_number;
 
-    // std::cout << "[makeMove] halfmove_clock=" << halfmove_clock << " fullmove_number=" << fullmove_number << "\n";
-    // std::cout.flush();
 
     side_to_move = opponent_color;
 
-    // current_zobrist_key = calculateZobristKey();
 
 
     current_zobrist_key ^= castling_keys[undo_entry.castling_rights];
@@ -800,19 +808,13 @@ bool Board::makeMove(const Move& move) {
     }
 
     move_history.push_back(undo_entry);
-    // std::cout << "[makeMove] Switched side_to_move to " << (side_to_move == Color::WHITE ? "white" : "black") << " move_history size=" << move_history.size() << "\n";
-    // std::cout.flush();
 
     if (pieceBB(us_color, KING) &&
         isSquareAttacked(findKing(us_color), opponent_color)) {
-        // std::cout << "[makeMove] Move leaves own king in check, undoing\n";
-        // std::cout.flush();
         unmakeMove();
         return false;
     }
 
-    // std::cout << "[makeMove] EXIT OK\n";
-    // std::cout.flush();
     return true;
 }
 
@@ -894,7 +896,8 @@ bool Board::inCheck(Color color) const {
 bool Board::hasLegalMoves(Color color) const {
     Color saved_side_to_move = side_to_move;
     const_cast<Board*>(this)->side_to_move = color;
-    auto legal_moves = generateLegalMoves();
+    MoveList legal_moves;
+    generateLegalMoves(legal_moves);
     const_cast<Board*>(this)->side_to_move = saved_side_to_move;
     return !legal_moves.empty();
 }
@@ -908,8 +911,10 @@ bool Board::isStalemate(Color color) const {
 }
 
 bool Board::isFiftyMoveDraw() const {
-    // TODO: implement
-    return false;
+    // 100 halfmoves without a pawn move or capture. Checkmate on the 100th
+    // halfmove technically overrides this; the search checks for legal moves
+    // and mate before consulting draw rules, so that ordering is preserved.
+    return halfmove_clock >= 100;
 }
 
 bool Board::isThreefoldRepetition() const {
@@ -931,8 +936,48 @@ bool Board::isThreefoldRepetition() const {
     return false;
 }
 
+bool Board::isRepetitionDraw() const {
+    int historySize = move_history.size();
+
+    for (int i = historySize - 2; i >= 0; i -= 2) {
+        if (move_history[i].zobrist_key == current_zobrist_key) {
+            return true;
+        }
+
+        if (move_history[i].moved_piece == PAWN ||
+            move_history[i].captured_piece != PieceTypeCount) {
+            break;
+        }
+    }
+
+    return false;
+}
+
 bool Board::isInsufficientMaterial() const {
-    // TODO: implement
+    // Any pawn, rook or queen on the board means mate is still possible.
+    if (white_bitboards[PAWN] | black_bitboards[PAWN] |
+        white_bitboards[ROOK] | black_bitboards[ROOK] |
+        white_bitboards[QUEEN] | black_bitboards[QUEEN]) {
+        return false;
+    }
+
+    uint64_t white_minors = white_bitboards[KNIGHT] | white_bitboards[BISHOP];
+    uint64_t black_minors = black_bitboards[KNIGHT] | black_bitboards[BISHOP];
+    int minor_count = std::popcount(white_minors) + std::popcount(black_minors);
+
+    // K vs K, or a single minor piece vs bare king: dead draw.
+    if (minor_count <= 1) return true;
+
+    // KB vs KB with both bishops on the same square color: dead draw.
+    if (minor_count == 2 &&
+        std::popcount(white_bitboards[BISHOP]) == 1 &&
+        std::popcount(black_bitboards[BISHOP]) == 1) {
+        constexpr uint64_t light_squares = 0x55AA55AA55AA55AAULL;
+        bool white_on_light = white_bitboards[BISHOP] & light_squares;
+        bool black_on_light = black_bitboards[BISHOP] & light_squares;
+        return white_on_light == black_on_light;
+    }
+
     return false;
 }
 
@@ -1027,10 +1072,15 @@ void Board::makeNullMove() {
     undo.castling_rights = castling_rights;
     undo.en_passant_square_index = en_passant_square_index;
     undo.halfmove_clock = halfmove_clock;
+    undo.fullmove_number = fullmove_number;
     undo.zobrist_key = current_zobrist_key;
     undo.move = Move();
     undo.captured_piece = PieceTypeCount;
     undo.moved_piece = PieceTypeCount;
+    undo.is_pawn_double_push = false;
+    undo.is_castling_move = false;
+    undo.castling_rook_from_square = -1;
+    undo.castling_rook_to_square = -1;
 
     move_history.push_back(undo);
 

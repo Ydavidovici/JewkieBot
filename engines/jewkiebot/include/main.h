@@ -50,6 +50,12 @@ public:
     void setBookMaxFullmove(int n) { book_max_fullmove = n; }
     int bookMaxFullmove() const { return book_max_fullmove; }
 
+    // UCI options. Only call between searches — the TT resize is not safe
+    // against a running search.
+    void setHashSize(int mb) { tt.resize(mb); }
+    void setThreadCount(int n) { searcher.setThreadCount(n); }
+    int threadCount() const { return searcher.getThreadCount(); }
+
     std::thread searchThread;
 
 private:
