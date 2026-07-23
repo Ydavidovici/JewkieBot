@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
 
+# The release step creates/updates a GitHub Release, which needs contents
+# write access; without this block the workflow token is read-only and the
+# upload fails with "Resource not accessible by integration".
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
