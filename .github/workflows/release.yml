@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual re-release of an existing tag, e.g. when a tag-push run failed:
+  # builds the tag's code and attaches the artifact to that tag's release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v2.2.0)"
+        required: true
+        type: string
 
 # The release step creates/updates a GitHub Release, which needs contents
 # write access; without this block the workflow token is read-only and the
@@ -14,12 +22,17 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     defaults:
       run:
         working-directory: engines/jewkiebot
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On dispatch, build the tag itself, not the branch the run started from.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Add MinGW to PATH
         shell: pwsh
@@ -31,6 +44,7 @@ jobs:
           cmake -S . -B build `
             -G "MinGW Makefiles" `
             -DCMAKE_BUILD_TYPE=Release `
+            -DENGINE_VERSION="$env:RELEASE_TAG" `
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
 
       - name: Build
@@ -40,7 +54,7 @@ jobs:
       - name: Stage artifact
         shell: pwsh
         run: |
-          $artifact = "jewkiebot-${{ github.ref_name }}-windows-x64.exe"
+          $artifact = "jewkiebot-$env:RELEASE_TAG-windows-x64.exe"
           Copy-Item build\jewkiebot.exe $artifact
           echo "ARTIFACT=$artifact" >> $env:GITHUB_ENV
           echo "ARTIFACT_PATH=engines/jewkiebot/$artifact" >> $env:GITHUB_ENV
@@ -48,4 +62,5 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: ${{ env.ARTIFACT_PATH }}
