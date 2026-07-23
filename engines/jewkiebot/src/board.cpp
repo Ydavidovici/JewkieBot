@@ -101,8 +101,10 @@ namespace {
     }
 }
 
-Board::Board() {
-    // init zobrist
+// Zobrist key init, shared by every constructor: a Board built directly from
+// a FEN string must get initialized keys too, not just the default Board.
+// (The attack tables above are namespace-scope constants and need no call.)
+void Board::initStaticTables() {
     std::call_once(zobrist_once_flag_, []() {
         std::mt19937_64 rng(123456789);
         std::uniform_int_distribution<uint64_t> dist;
@@ -123,6 +125,10 @@ Board::Board() {
 
         side_key = dist(rng);
     });
+}
+
+Board::Board() {
+    initStaticTables();
 
     white_bitboards.fill(0);
     black_bitboards.fill(0);
@@ -825,8 +831,10 @@ bool Board::isStalemate(Color color) const {
 }
 
 bool Board::isFiftyMoveDraw() const {
-    // TODO: implement
-    return false;
+    // 100 halfmoves without a pawn move or capture. Checkmate on the 100th
+    // halfmove technically overrides this; the search checks for legal moves
+    // and mate before consulting draw rules, so that ordering is preserved.
+    return halfmove_clock >= 100;
 }
 
 bool Board::isThreefoldRepetition() const {
@@ -848,8 +856,48 @@ bool Board::isThreefoldRepetition() const {
     return false;
 }
 
+bool Board::isRepetitionDraw() const {
+    int historySize = move_history.size();
+
+    for (int i = historySize - 2; i >= 0; i -= 2) {
+        if (move_history[i].zobrist_key == current_zobrist_key) {
+            return true;
+        }
+
+        if (move_history[i].moved_piece == PAWN ||
+            move_history[i].captured_piece != PieceTypeCount) {
+            break;
+        }
+    }
+
+    return false;
+}
+
 bool Board::isInsufficientMaterial() const {
-    // TODO: implement
+    // Any pawn, rook or queen on the board means mate is still possible.
+    if (white_bitboards[PAWN] | black_bitboards[PAWN] |
+        white_bitboards[ROOK] | black_bitboards[ROOK] |
+        white_bitboards[QUEEN] | black_bitboards[QUEEN]) {
+        return false;
+    }
+
+    uint64_t white_minors = white_bitboards[KNIGHT] | white_bitboards[BISHOP];
+    uint64_t black_minors = black_bitboards[KNIGHT] | black_bitboards[BISHOP];
+    int minor_count = std::popcount(white_minors) + std::popcount(black_minors);
+
+    // K vs K, or a single minor piece vs bare king: dead draw.
+    if (minor_count <= 1) return true;
+
+    // KB vs KB with both bishops on the same square color: dead draw.
+    if (minor_count == 2 &&
+        std::popcount(white_bitboards[BISHOP]) == 1 &&
+        std::popcount(black_bitboards[BISHOP]) == 1) {
+        constexpr uint64_t light_squares = 0x55AA55AA55AA55AAULL;
+        bool white_on_light = white_bitboards[BISHOP] & light_squares;
+        bool black_on_light = black_bitboards[BISHOP] & light_squares;
+        return white_on_light == black_on_light;
+    }
+
     return false;
 }
 
@@ -925,10 +973,15 @@ void Board::makeNullMove() {
     undo.castling_rights = castling_rights;
     undo.en_passant_square_index = en_passant_square_index;
     undo.halfmove_clock = halfmove_clock;
+    undo.fullmove_number = fullmove_number;
     undo.zobrist_key = current_zobrist_key;
     undo.move = Move();
     undo.captured_piece = PieceTypeCount;
     undo.moved_piece = PieceTypeCount;
+    undo.is_pawn_double_push = false;
+    undo.is_castling_move = false;
+    undo.castling_rook_from_square = -1;
+    undo.castling_rook_to_square = -1;
 
     move_history.push_back(undo);
 

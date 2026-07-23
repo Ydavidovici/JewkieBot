@@ -6,6 +6,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
+# An engine built at -O0 loses ~5-10x NPS; default to an optimized build when
+# the caller doesn't choose one explicitly.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
 set(ENGINE_VERSION "dev" CACHE STRING "Version of the engine")
 add_compile_definitions(ENGINE_VERSION="${ENGINE_VERSION}")
 

@@ -1,6 +1,7 @@
 #include "main.h"
 #include "board.h"
 #include "bench.h"
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -93,6 +94,8 @@ static void handle_uci(const std::string& line, Engine& engine) {
     std::cout << "option name OwnBook type check default true\n";
     std::cout << "option name BookFile type string default \n";
     std::cout << "option name BookMaxFullmove type spin default 20 min 1 max 200\n";
+    std::cout << "option name Hash type spin default 64 min 1 max 4096\n";
+    std::cout << "option name Threads type spin default " << engine.threadCount() << " min 1 max 256\n";
     std::cout << "uciok\n";
     std::cout.flush();
 }
@@ -133,6 +136,24 @@ static void handle_setoption(const std::string& line, Engine& engine) {
             std::cout << "info string BookMaxFullmove=" << engine.bookMaxFullmove() << "\n";
         } catch (...) {
             std::cout << "info string invalid BookMaxFullmove\n";
+        }
+    } else if (name == "Hash") {
+        try {
+            int mb = std::clamp(std::stoi(value), 1, 4096);
+            engine.stopSearch();
+            engine.waitSearch();
+            engine.setHashSize(mb);
+            std::cout << "info string Hash=" << mb << "\n";
+        } catch (...) {
+            std::cout << "info string invalid Hash\n";
+        }
+    } else if (name == "Threads") {
+        try {
+            int threads = std::clamp(std::stoi(value), 1, 256);
+            engine.setThreadCount(threads);
+            std::cout << "info string Threads=" << threads << "\n";
+        } catch (...) {
+            std::cout << "info string invalid Threads\n";
         }
     } else {
         std::cout << "info string unknown option: " << name << "\n";

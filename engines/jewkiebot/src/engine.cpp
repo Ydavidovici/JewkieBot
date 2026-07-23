@@ -84,6 +84,12 @@ std::string Engine::playMove(const PlaySettings& settings) {
         settings.infinite
     );
 
+    // No legal moves (already mated/stalemated): report the UCI null move
+    // instead of feeding an invalid move to the board.
+    if (!best.isValid()) {
+        return "0000";
+    }
+
     board.makeMove(best);
     std::string uci = best.toString();
     history.push_back(uci);
