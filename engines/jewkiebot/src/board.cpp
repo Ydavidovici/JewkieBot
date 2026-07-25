@@ -494,6 +494,22 @@ void Board::generatePseudoMoves(MoveList& out) const {
     }
 }
 
+uint64_t Board::knightAttackMask(int square) {
+    return ATTACK_TABLES.knight_attacks[square];
+}
+
+uint64_t Board::kingAttackMask(int square) {
+    return ATTACK_TABLES.king_attacks[square];
+}
+
+uint64_t Board::bishopAttackMask(int square, uint64_t occupancy) {
+    return bishopAttacks(square, occupancy);
+}
+
+uint64_t Board::rookAttackMask(int square, uint64_t occupancy) {
+    return rookAttacks(square, occupancy);
+}
+
 int Board::findKing(Color color) const {
     uint64_t king_bitboard = (color == Color::WHITE ? white_bitboards[KING] : black_bitboards[KING]);
     assert(king_bitboard != 0);

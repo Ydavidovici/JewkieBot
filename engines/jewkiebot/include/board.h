@@ -46,6 +46,13 @@ public:
 
     uint64_t occupancy(Color color) const {return occupancy_[color == Color::WHITE ? 0 : 1];}
     uint64_t pieceBB(Color color, PieceIndex pieceIndex) const;
+
+    // Attack masks from the precomputed tables (sliders resolved against
+    // `occupancy`). Exposed for evaluation terms like mobility.
+    static uint64_t knightAttackMask(int square);
+    static uint64_t kingAttackMask(int square);
+    static uint64_t bishopAttackMask(int square, uint64_t occupancy);
+    static uint64_t rookAttackMask(int square, uint64_t occupancy);
     Color sideToMove() const {return side_to_move;}
     PieceIndex getPieceAt(int square) const {return static_cast<PieceIndex>(mailbox_[square]);}
 

@@ -23,6 +23,30 @@ private:
     int evaluateMaterial(const Board& board) const;
     int evaluatePositional(const Board& board) const;
 
+    static constexpr int SCALAR_PARAM_COUNT = 12;
+    int* scalarParams(int index);
+
+    // Structural/activity heuristics, each scored for one color; evaluate()
+    // takes white's total minus black's.
+    int pawnStructureScore(const Board& board, Color color) const;
+    int pieceActivityScore(const Board& board, Color color) const;
+    int kingShelterScore(const Board& board, Color color) const;
+
+    // Heuristic weights in centipawns. Penalties are stored positive and
+    // subtracted where applied. All are exposed through getParameter/
+    // setParameter (after the PSTs) so Texel-style tuning against the game
+    // database can adjust them.
+    int doubledPawnPenalty = 12;
+    int isolatedPawnPenalty = 10;
+    int bishopPairBonus = 30;
+    int rookOpenFileBonus = 20;
+    int rookSemiOpenFileBonus = 10;
+    int mobilityWeights[4] = {4, 3, 2, 1};  // knight, bishop, rook, queen — per reachable square
+    int shelterCloseBonus = 10;             // friendly pawn directly in front of the king
+    int shelterFarBonus = 5;                // friendly pawn two ranks in front
+    int kingOpenFilePenalty = 15;           // no friendly pawn at all on/next to the king's file
+    int passedPawnBonus[8] = {0, 10, 15, 25, 40, 65, 100, 0};  // by relative rank
+
     int pieceValues[PST_COUNT] = {100, 320, 330, 500, 900, 20000};
 
     std::array<int, 64> whitePawnTable{};

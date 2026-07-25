@@ -196,14 +196,14 @@ static void test_pst_bishop_active_vs_corner() {
 
 // Rook on rank 2 (d2) must score higher than rook on the rim files.
 // The PST rewards rank-2 placement (+10) over rank-6 (-5).
-static void test_pst_rook_rank_2_bonus() {
-    std::cout << "--- test_pst_rook_rank_2_bonus ---\n";
+static void test_pst_rook_seventh_rank_bonus() {
+    std::cout << "--- test_pst_rook_seventh_rank_bonus ---\n";
 
-    int rank2 = eval("k7/8/8/8/8/8/3R4/K7 w - - 0 1");  // Rd2: PST=10
-    int rank6 = eval("k7/8/3R4/8/8/8/8/K7 w - - 0 1");  // Rd6: PST=-5
+    int rank7 = eval("k7/3R4/8/8/8/8/8/K7 w - - 0 1");  // Rd7: PST=+10
+    int rank2 = eval("k7/8/8/8/8/8/3R4/K7 w - - 0 1");  // Rd2: PST=0
 
-    std::cout << "  rook@rank2=" << rank2 << "  rook@rank6=" << rank6 << "\n";
-    expect_gt(rank2, rank6, "rook on rank 2 > rook on rank 6 (per PST)");
+    std::cout << "  rook@rank7=" << rank7 << "  rook@rank2=" << rank2 << "\n";
+    expect_gt(rank7, rank2, "rook on the seventh > rook on rank 2 (per PST)");
     std::cout << "\n";
 }
 
@@ -375,7 +375,7 @@ int main() {
     test_pst_pawn_center_beats_wing();
     test_pst_knight_center_vs_rim();
     test_pst_bishop_active_vs_corner();
-    test_pst_rook_rank_2_bonus();
+    test_pst_rook_seventh_rank_bonus();
     test_pst_queen_center_vs_rim();
 
     std::cout << "========== SECTION 3: Evaluator Properties ==========\n\n";
