@@ -47,6 +47,13 @@ public:
 
     bool loadOpeningBook(const std::string& path) { return opening_book.load(path); }
     void setUseBook(bool on) { use_book = on; }
+
+    // Tuned evaluation parameters. Only call between searches — mutating the
+    // evaluator (shared by reference with the searcher) mid-search is unsafe.
+    bool loadEvalParams(const std::string& path) { return evaluator.loadParametersFromFile(path); }
+    std::string exportEvalParams() const { return evaluator.exportParameters(); }
+    int evalParamCount() const { return evaluator.getParameterCount(); }
+
     void setBookMaxFullmove(int n) { book_max_fullmove = n; }
     int bookMaxFullmove() const { return book_max_fullmove; }
 

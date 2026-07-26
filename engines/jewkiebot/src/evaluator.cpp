@@ -1,6 +1,7 @@
 #include "evaluator.h"
 #include <algorithm>
 #include <bit>
+#include <fstream>
 #include <mutex>
 
 namespace {
@@ -443,6 +444,35 @@ void Evaluator::setParameter(int index, int value) {
     if (index < SCALAR_PARAM_COUNT) { *scalarParams(index) = value; return; }
     index -= SCALAR_PARAM_COUNT;
     if (index < 8) { passedPawnBonus[index] = value; return; }
+}
+
+bool Evaluator::loadParametersFromFile(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return false;
+
+    const int count = getParameterCount();
+    int index = 0;
+    int value;
+    // Tolerant of any whitespace layout (one per line, or space-separated).
+    // Extra values past the known count are ignored; a short file applies its
+    // prefix and leaves the rest at their current values.
+    while (index < count && (f >> value)) {
+        setParameter(index, value);
+        ++index;
+    }
+
+    updateBlackTables();  // rebuild mirrored black + combined tables from the new values
+    return index > 0;
+}
+
+std::string Evaluator::exportParameters() const {
+    std::string out;
+    const int count = getParameterCount();
+    for (int i = 0; i < count; ++i) {
+        out += std::to_string(getParameter(i));
+        out += '\n';
+    }
+    return out;
 }
 
 void Evaluator::updateBlackTables() {

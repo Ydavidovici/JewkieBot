@@ -75,6 +75,9 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.get("/api/openings", engineController.getOpenings);
     app.post("/api/engine/build", engineController.buildEngine);
     app.post("/api/engine/setoption", engineController.setOptions);
+    app.get("/api/engine/tuning", engineController.getTuning);
+    app.post("/api/engine/tuning", engineController.applyTuning);
+    app.delete("/api/engine/tuning", engineController.clearTuning);
     app.post("/api/engine/go", engineController.go);
     app.post("/api/engine/reset", engineController.reset);
     app.post("/api/engine/bench", engineController.bench);
@@ -216,6 +219,7 @@ if (import.meta.main) {
         notifier,
         engineOptions: {
             bookPath: path.resolve(__dirname, "../../engines/jewkiebot/book.bin"),
+            evalParamsPath: path.resolve(__dirname, "../../engines/jewkiebot/eval_params.txt"),
         },
     });
 

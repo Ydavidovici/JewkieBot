@@ -3,6 +3,7 @@
 #include "board.h"
 #include <vector>
 #include <cstdint>
+#include <string>
 
 class Evaluator {
 public:
@@ -18,6 +19,15 @@ public:
     int getParameter(int index) const;
     void setParameter(int index, int value);
     void updateBlackTables();
+
+    // Apply a tuned parameter vector from a text file (whitespace-separated
+    // integers, in getParameter index order) and rebuild the derived tables.
+    // Returns false if the file can't be opened or held no values.
+    bool loadParametersFromFile(const std::string& path);
+
+    // Dump the current parameters as one integer per line (getParameter order),
+    // so a caller can read back defaults / what's currently applied.
+    std::string exportParameters() const;
 
 private:
     int evaluateMaterial(const Board& board) const;

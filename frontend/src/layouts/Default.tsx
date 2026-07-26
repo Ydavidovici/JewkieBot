@@ -1,7 +1,7 @@
 import React from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { useBot } from "../context/BotContext.jsx";
-import { LayoutDashboard, Gamepad2, Settings, Activity, LineChart, Database, Swords } from "lucide-react";
+import { LayoutDashboard, Gamepad2, Settings, Activity, LineChart, Database, Swords, SlidersHorizontal } from "lucide-react";
 
 export default function Default() {
     const { env, activeStatus } = useBot();
@@ -55,6 +55,9 @@ export default function Default() {
                     </NavLink>
                     <NavLink to="/tasks" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
                         <Database size={18} /> Tasks & Integration
+                    </NavLink>
+                    <NavLink to="/tuning" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
+                        <SlidersHorizontal size={18} /> Eval Tuning
                     </NavLink>
                     <NavLink to="/benchmark" className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium ${isActive ? "bg-slate-800 text-white shadow-md border border-slate-700" : "text-slate-400 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
                         <Activity size={18} /> Diagnostics

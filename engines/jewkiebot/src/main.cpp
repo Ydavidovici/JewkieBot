@@ -19,6 +19,7 @@ static void handle_position(const std::string& line, Engine& engine);
 static void handle_bench(const std::string& line, Engine& engine);
 static void handle_eval(const std::string& line, Engine& engine);
 static void handle_setoption(const std::string& line, Engine& engine);
+static void handle_evalparams(const std::string& line, Engine& engine);
 
 static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"uci", handle_uci},
@@ -31,6 +32,7 @@ static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"eval", handle_eval},
     {"setoption", handle_setoption},
     {"stop", handle_stop},
+    {"evalparams", handle_evalparams},
 };
 
 static std::string trim(const std::string& s) {
@@ -94,6 +96,7 @@ static void handle_uci(const std::string& line, Engine& engine) {
     std::cout << "option name OwnBook type check default true\n";
     std::cout << "option name BookFile type string default \n";
     std::cout << "option name BookMaxFullmove type spin default 20 min 1 max 200\n";
+    std::cout << "option name EvalParamsFile type string default \n";
     std::cout << "option name Hash type spin default 64 min 1 max 4096\n";
     std::cout << "option name Threads type spin default " << engine.threadCount() << " min 1 max 256\n";
     std::cout << "uciok\n";
@@ -125,6 +128,21 @@ static void handle_setoption(const std::string& line, Engine& engine) {
                       << engine.getOpeningBook().size() << " entries)\n";
         } else {
             std::cout << "info string failed to load opening book: " << value << "\n";
+        }
+    } else if (name == "EvalParamsFile") {
+        if (value.empty()) {
+            std::cout << "info string EvalParamsFile cleared (compiled defaults apply on restart)\n";
+        } else {
+            // Applying params mutates the evaluator, which the searcher holds by
+            // reference — quiesce any search first, like Hash.
+            engine.stopSearch();
+            engine.waitSearch();
+            if (engine.loadEvalParams(value)) {
+                std::cout << "info string eval params loaded (" << engine.evalParamCount()
+                          << " params) from " << value << "\n";
+            } else {
+                std::cout << "info string failed to load eval params: " << value << "\n";
+            }
         }
     } else if (name == "OwnBook") {
         bool on = (value == "true" || value == "True" || value == "1");
@@ -236,6 +254,20 @@ static void handle_eval(const std::string& line, Engine& engine) {
 
     std::cout << "Score: " << score << "\n";
     std::cout << "Eval Complete\n";
+    std::cout.flush();
+}
+
+// Dump the evaluator's current parameters so a caller can read defaults or
+// what's currently applied. One "evalparam <index> <value>" line per value,
+// terminated by "evalparamsok" for easy parsing.
+static void handle_evalparams(const std::string& line, Engine& engine) {
+    std::istringstream iss(engine.exportEvalParams());
+    std::string value;
+    int index = 0;
+    while (std::getline(iss, value)) {
+        if (!value.empty()) std::cout << "evalparam " << index++ << " " << value << "\n";
+    }
+    std::cout << "evalparamsok\n";
     std::cout.flush();
 }
 

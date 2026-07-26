@@ -1,6 +1,8 @@
 build
 tests/performance/results
 .claude
+book.bin
+eval_params.txt
 /engines/stockfish.zip
 ../stockfish.zip
 /engines/stockfish/

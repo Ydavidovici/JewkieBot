@@ -48,6 +48,7 @@ export interface UciEngineOptions {
     notifier: any;
     label: string;
     bookPath: string | null;
+    evalParamsPath: string | null;
 }
 
 export interface EngineManagerOptions {

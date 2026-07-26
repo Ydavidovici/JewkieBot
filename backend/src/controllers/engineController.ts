@@ -3,6 +3,8 @@ import {EngineManager} from "../engineManager.ts";
 import {Notifier} from "../notifier";
 import {GameAnalyzer} from "../gameAnalyzer";
 import path from "node:path";
+import {mkdir, writeFile, unlink} from "node:fs/promises";
+import {existsSync} from "node:fs";
 
 export class EngineController {
     constructor(
@@ -31,6 +33,83 @@ export class EngineController {
             res.json({status: "success"});
         } catch (err) {
             this.notifier.error("SetOption Error:", err);
+            res.status(500).json({error: err.message});
+        }
+    }
+
+    // GET /api/engine/tuning — the engine's current eval parameters (defaults or
+    // whatever's applied) plus whether a tuned set is stored.
+    getTuning = async (req: any, res: any): Promise<any> => {
+        try {
+            const paramsPath = this.engineManager.engineOptions?.evalParamsPath ?? null;
+            const main: any = this.engineManager.getEngine("Main");
+
+            let params: number[] = [];
+            if (main && typeof main.getEvalParams === "function") {
+                params = await main.getEvalParams();
+            }
+
+            res.json({
+                count: params.length,
+                params,
+                applied: !!(paramsPath && existsSync(paramsPath)),
+                file: paramsPath ? path.basename(paramsPath) : null,
+            });
+        } catch (err: any) {
+            this.notifier.error("GetTuning Error:", err);
+            res.status(500).json({error: err.message});
+        }
+    }
+
+    // POST /api/engine/tuning { params: number[] | string } — persist a tuned
+    // parameter vector and apply it to the running engine immediately.
+    applyTuning = async (req: any, res: any): Promise<any> => {
+        try {
+            const paramsPath = this.engineManager.engineOptions?.evalParamsPath ?? null;
+            if (!paramsPath) return res.status(503).json({error: "Eval params path not configured"});
+
+            let {params} = req.body ?? {};
+            if (typeof params === "string") {
+                params = params.split(/\s+/).filter(Boolean).map(Number);
+            }
+            if (!Array.isArray(params) || params.length === 0 || params.some((n: any) => !Number.isFinite(n))) {
+                return res.status(400).json({error: "params must be a non-empty array of integers (or a whitespace-separated string)"});
+            }
+
+            // Validate length against the engine's expected count when available.
+            const main: any = this.engineManager.getEngine("Main");
+            if (main && typeof main.getEvalParams === "function") {
+                const current = await main.getEvalParams();
+                if (current.length && params.length !== current.length) {
+                    return res.status(400).json({error: `expected ${current.length} params, got ${params.length}`});
+                }
+            }
+
+            await mkdir(path.dirname(paramsPath), {recursive: true});
+            await writeFile(paramsPath, params.map((n: number) => Math.round(n)).join("\n") + "\n");
+
+            // Live-apply to the managed engine so it takes effect without a respawn.
+            let liveApplied = false;
+            if (main && typeof main.setOption === "function") {
+                try { await main.setOption("EvalParamsFile", paramsPath); liveApplied = true; } catch (_) {}
+            }
+
+            res.json({status: "success", count: params.length, liveApplied});
+        } catch (err: any) {
+            this.notifier.error("ApplyTuning Error:", err);
+            res.status(500).json({error: err.message});
+        }
+    }
+
+    // DELETE /api/engine/tuning — remove the stored tuned params. Compiled
+    // defaults return on the next engine (re)start.
+    clearTuning = async (req: any, res: any): Promise<any> => {
+        try {
+            const paramsPath = this.engineManager.engineOptions?.evalParamsPath ?? null;
+            if (paramsPath && existsSync(paramsPath)) await unlink(paramsPath);
+            res.json({status: "success", note: "Compiled defaults apply on the next engine restart."});
+        } catch (err: any) {
+            this.notifier.error("ClearTuning Error:", err);
             res.status(500).json({error: err.message});
         }
     }

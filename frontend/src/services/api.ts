@@ -224,6 +224,19 @@ export const stopSelfPlay = (taskId, baseUrl = null) =>
         baseUrl
     });
 
+// --- Eval Tuning ---
+// Current eval parameters + whether a tuned set is applied.
+export const getTuningParams = (baseUrl = null) =>
+    request("/api/engine/tuning", { method: "GET", baseUrl });
+
+// Apply a tuned parameter vector (array of ints or whitespace-separated string).
+export const applyTuningParams = (params, baseUrl = null) =>
+    request("/api/engine/tuning", { method: "POST", data: { params }, baseUrl });
+
+// Remove stored tuned params; compiled defaults return on next engine restart.
+export const clearTuningParams = (baseUrl = null) =>
+    request("/api/engine/tuning", { method: "DELETE", baseUrl });
+
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",

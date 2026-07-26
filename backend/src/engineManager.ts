@@ -1,6 +1,7 @@
 import {spawn} from "bun";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
+import {existsSync} from "node:fs";
 import {EventEmitter} from "node:events";
 import {nullNotifier} from "./notifier";
 import type {UciEngineOptions, SshConfig, EngineManagerOptions, EngineGoOptions, EngineCommandOptions} from "../../Shared/Types.ts";
@@ -36,6 +37,7 @@ export class UciEngine extends EventEmitter {
     notifier: any;
     label: string;
     bookPath: string | null;
+    evalParamsPath: string | null;
 
     constructor(options: Partial<UciEngineOptions> = {}) {
         super();
@@ -53,6 +55,7 @@ export class UciEngine extends EventEmitter {
         this.notifier = options.notifier ?? nullNotifier;
         this.label = options.label ?? "engine";
         this.bookPath = options.bookPath ?? null;
+        this.evalParamsPath = options.evalParamsPath ?? null;
     }
 
     async ensureReady() {
@@ -96,6 +99,13 @@ export class UciEngine extends EventEmitter {
             if (this.bookPath) {
                 await this._sendCommand({command: `setoption name OwnBook value true`});
                 await this._sendCommand({command: `setoption name BookFile value ${this.bookPath}`});
+            }
+
+            // Apply tuned eval params if a file is present. The path is local, so
+            // only send it when the file actually exists (a remote engine over SSH
+            // wouldn't see it anyway); the engine ignores a bad file regardless.
+            if (this.evalParamsPath && existsSync(this.evalParamsPath)) {
+                await this._sendCommand({command: `setoption name EvalParamsFile value ${this.evalParamsPath}`});
             }
 
             await this._sendCommand({command: "isready", stopCondition: (line) => line === "readyok", timeoutMs: this.handshakeTimeoutMs});
@@ -330,6 +340,22 @@ export class UciEngine extends EventEmitter {
         await this.ensureReady();
         const valueStr = value !== undefined && value !== null && value !== "" ? ` value ${value}` : "";
         await this._sendCommand({command: `setoption name ${name}${valueStr}`});
+    }
+
+    // Read the engine's current eval parameters (defaults, or whatever's applied)
+    // via the custom `evalparams` command. Returns them in index order.
+    async getEvalParams(): Promise<number[]> {
+        await this.ensureReady();
+        const params: number[] = [];
+        await this._sendCommand({
+            command: "evalparams",
+            stopCondition: (line) => line === "evalparamsok",
+            callback: (line) => {
+                const m = line.match(/^evalparam (\d+) (-?\d+)$/);
+                if (m) params[parseInt(m[1], 10)] = parseInt(m[2], 10);
+            },
+        });
+        return params;
     }
 
     async position(fen, moves = []) {

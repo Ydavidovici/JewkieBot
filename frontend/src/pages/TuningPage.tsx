@@ -1,0 +1,150 @@
+import React, { useState, useEffect } from "react";
+import { SlidersHorizontal, Check, RotateCcw, Download, Upload } from "lucide-react";
+import { getTuningParams, applyTuningParams, clearTuningParams } from "../services/api.js";
+import { useBot } from "../context/BotContext.jsx";
+
+// Applies the results of an external Texel tuning run: paste/upload the tuned
+// parameter vector, and the engine loads it (persisted server-side, sent on
+// every engine spawn). The engine's own current values seed the editor.
+export default function TuningPage() {
+    const { activeUrl } = useBot();
+
+    const [count, setCount] = useState<number | null>(null);
+    const [applied, setApplied] = useState(false);
+    const [text, setText] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
+
+    const load = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const d: any = await getTuningParams(activeUrl);
+            setCount(d?.count ?? null);
+            setApplied(!!d?.applied);
+            if (Array.isArray(d?.params) && d.params.length) {
+                setText(d.params.join("\n"));
+            }
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to load params");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeUrl]);
+
+    // Count the integers the user has entered, to validate against the engine's count.
+    const entered = text.split(/\s+/).filter(Boolean);
+    const enteredCount = entered.length;
+    const lengthOk = count == null || enteredCount === count;
+
+    const apply = async () => {
+        setBusy(true);
+        setError(null);
+        setNotice(null);
+        try {
+            const res: any = await applyTuningParams(text, activeUrl);
+            setApplied(true);
+            setNotice(`Applied ${res?.count ?? enteredCount} parameters${res?.liveApplied ? " (live)" : ""}.`);
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to apply");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const revert = async () => {
+        setBusy(true);
+        setError(null);
+        setNotice(null);
+        try {
+            const res: any = await clearTuningParams(activeUrl);
+            setApplied(false);
+            setNotice(res?.note || "Cleared. Defaults return on the next engine restart.");
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to clear");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setText(await file.text());
+        e.target.value = "";
+    };
+
+    return (
+        <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl">
+            <header>
+                <h1 className="text-3xl font-black text-white mb-2 tracking-tight flex items-center gap-3">
+                    <SlidersHorizontal className="text-purple-400" /> Eval Tuning
+                </h1>
+                <p className="text-slate-400">
+                    Apply the results of a Texel tuning run. Paste the tuned parameter vector
+                    (whitespace-separated integers, in the engine's parameter order) and the
+                    engine will use it on every spawn.
+                </p>
+            </header>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-lg p-5 flex flex-col gap-4">
+                <div className="flex items-center gap-4 text-sm">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${applied ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-700/40 text-slate-400"}`}>
+                        {applied ? "Tuned params applied" : "Using compiled defaults"}
+                    </span>
+                    {count != null && (
+                        <span className="text-slate-400 font-mono">
+                            engine expects <span className="text-slate-200">{count}</span> params
+                        </span>
+                    )}
+                    <button onClick={load} disabled={loading}
+                        className="ml-auto text-xs text-slate-400 hover:text-white flex items-center gap-1.5 disabled:opacity-40">
+                        <Download size={14} /> {loading ? "Loading…" : "Load current"}
+                    </button>
+                </div>
+
+                <textarea
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    spellCheck={false}
+                    placeholder="Paste tuned parameters here (one integer per line, or space-separated)…"
+                    className="w-full h-80 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-purple-500 resize-y"
+                />
+
+                <div className="flex items-center gap-3 flex-wrap">
+                    <span className={`text-xs font-mono ${lengthOk ? "text-slate-400" : "text-amber-400"}`}>
+                        {enteredCount} entered{count != null ? ` / ${count} expected` : ""}
+                        {!lengthOk && " — count mismatch"}
+                    </span>
+
+                    <label className="ml-auto text-xs text-slate-400 hover:text-white flex items-center gap-1.5 cursor-pointer">
+                        <Upload size={14} /> Upload file
+                        <input type="file" accept=".txt,text/plain" onChange={onFile} className="hidden" />
+                    </label>
+
+                    <button onClick={revert} disabled={busy || !applied}
+                        className="px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors">
+                        <RotateCcw size={15} /> Revert to defaults
+                    </button>
+                    <button onClick={apply} disabled={busy || enteredCount === 0 || !lengthOk}
+                        className="px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors">
+                        <Check size={16} /> {busy ? "Applying…" : "Apply"}
+                    </button>
+                </div>
+
+                {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2">{error}</p>}
+                {notice && <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2">{notice}</p>}
+            </div>
+
+            <p className="text-xs text-slate-500">
+                Applied params take effect immediately on the managed engine and on every new
+                engine spawn (including Lichess games). Reverting removes the stored file;
+                compiled defaults return when engines next restart.
+            </p>
+        </div>
+    );
+}
