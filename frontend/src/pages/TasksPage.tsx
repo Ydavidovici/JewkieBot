@@ -1,8 +1,18 @@
 import React, {useState, useEffect} from "react";
+import {useNavigate} from "react-router-dom";
 import {Activity, Download, HardDrive, ListOrdered, FileText} from "lucide-react";
 
+interface TaskRow {
+    id: string;
+    type: string;
+    status: string;
+    progress?: any;
+    result?: any;
+}
+
 export default function TasksPage() {
-    const [tasks, setTasks] = useState([]);
+    const navigate = useNavigate();
+    const [tasks, setTasks] = useState<TaskRow[]>([]);
 
     // Chess.com State
     const [username, setUsername] = useState("");
@@ -251,10 +261,18 @@ export default function TasksPage() {
                             {tasks.length === 0 ? (
                                 <p className="text-slate-500 text-sm text-center py-8">No tasks running.</p>
                             ) : (
-                                tasks.map(task => (
-                                    <div key={task.id} className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex flex-col gap-2">
+                                tasks.map(task => {
+                                    // Self-play runs have a live/replay view addressable by task id.
+                                    const viewable = task.type === "selfplay";
+                                    return (
+                                    <div key={task.id}
+                                        onClick={viewable ? () => navigate(`/selfplay/${task.id}`) : undefined}
+                                        className={`p-4 rounded-lg bg-slate-950 border border-slate-800 flex flex-col gap-2 ${viewable ? "cursor-pointer hover:border-purple-500/50 transition-colors" : ""}`}>
                                         <div className="flex justify-between items-center">
-                                            <span className="font-semibold text-slate-200 capitalize">{task.type.replace("_", " ")}</span>
+                                            <span className="font-semibold text-slate-200 capitalize">
+                                                {task.type.replace("_", " ")}
+                                                {viewable && <span className="ml-2 text-xs font-normal text-purple-400">View →</span>}
+                                            </span>
                                             <span className={`text-xs font-bold px-2 py-1 rounded-full ${
                                                 task.status === "COMPLETED" ? "bg-emerald-500/20 text-emerald-400" :
                                                     task.status === "RUNNING" ? "bg-blue-500/20 text-blue-400" :
@@ -275,7 +293,8 @@ export default function TasksPage() {
                                             </div>
                                         )}
                                     </div>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     </div>

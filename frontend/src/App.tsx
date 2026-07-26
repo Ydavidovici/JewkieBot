@@ -17,6 +17,7 @@ export default function App() {
                 <Route path="/analysis" element={<AnalysisPage/>} />
                 <Route path="/game" element={<Game/>} />
                 <Route path="/selfplay" element={<SelfPlayPage/>} />
+                <Route path="/selfplay/:taskId" element={<SelfPlayPage/>} />
                 <Route path="/benchmark" element={<BenchmarkControl/>} />
                 <Route path="/lichess" element={<LichessPage/>} />
                 <Route path="/tasks" element={<TasksPage/>} />

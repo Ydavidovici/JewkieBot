@@ -1,12 +1,31 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
-import { Swords, Play, ChevronLeft, ChevronRight, Activity, Cpu } from "lucide-react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { Swords, Play, ChevronLeft, ChevronRight, Activity, Cpu, History } from "lucide-react";
 import { getSelfPlayVersions, runSelfPlay } from "../services/api.js";
 import { useBot } from "../context/BotContext.jsx";
 
-// localStorage key for the in-progress run, so the live view survives navigation.
-const ACTIVE_KEY = "selfplay:activeTask";
+// Recent self-play runs, keyed per environment URL, so the live view can be
+// re-opened by task id (from here or the Tasks page) after navigating away —
+// and so concurrent matches are all reachable, not just the last one started.
+const RUNS_KEY = "selfplay:runs";
+
+interface StoredRun { taskId: string; url: string; v1: string; v2: string; startedAt: number; }
+
+function loadRuns(): StoredRun[] {
+    try { return JSON.parse(localStorage.getItem(RUNS_KEY) || "[]"); } catch { return []; }
+}
+function saveRuns(runs: StoredRun[]) {
+    // Keep the list bounded; newest last.
+    try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs.slice(-20))); } catch { /* ignore quota */ }
+}
+function rememberRun(run: StoredRun) {
+    saveRuns([...loadRuns().filter(r => r.taskId !== run.taskId), run]);
+}
+function runsForUrl(url: string): StoredRun[] {
+    return loadRuns().filter(r => r.url === url).sort((a, b) => b.startedAt - a.startedAt);
+}
 
 // A completed self-play game, as streamed in live (PGN) plus its decoded plies.
 interface LiveGame {
@@ -44,6 +63,9 @@ function decodeGame(index: number, pgn: string): LiveGame {
 
 export default function SelfPlayPage() {
     const { activeUrl } = useBot();
+    const { taskId: routeTaskId } = useParams();
+    const navigate = useNavigate();
+    const [runs, setRuns] = useState<StoredRun[]>([]);
 
     const [versions, setVersions] = useState<{version: string; label: string}[]>([]);
     const [v1, setV1] = useState("current");
@@ -83,16 +105,27 @@ export default function SelfPlayPage() {
     // after navigating away and back).
     const subscribeStream = (taskId: string) => {
         stop();
+        // Reset the view for the newly-viewed run so a previous run's games don't linger.
+        setError(null);
+        setLiveGames([]);
+        setSelected(null);
+        setPly(0);
+        setElo(null);
+        setProgress({ completed: 0, total: 0 });
         setRunning(true);
+
+        let gotAnyEvent = false;
         const es = new EventSource(`${activeUrl}/api/selfplay/stream/${taskId}`);
         esRef.current = es;
 
         es.addEventListener("progress", (e: MessageEvent) => {
+            gotAnyEvent = true;
             const d = JSON.parse(e.data);
             if (d.progress) setProgress(d.progress);
             if (d.elo) setElo(d.elo);
         });
         es.addEventListener("game", (e: MessageEvent) => {
+            gotAnyEvent = true;
             const d = JSON.parse(e.data);
             const decoded = decodeGame(d.index, d.pgn);
             setLiveGames(prev => {
@@ -103,34 +136,41 @@ export default function SelfPlayPage() {
             // Auto-follow the freshest game unless the user is browsing an older one.
             setSelected(prev => (prev === null ? d.index : prev));
         });
-        const finish = () => { setRunning(false); localStorage.removeItem(ACTIVE_KEY); stop(); };
+        const finish = () => { setRunning(false); stop(); };
         es.addEventListener("done", finish);
         es.addEventListener("error", (e: MessageEvent) => {
             try { const d = JSON.parse((e as any).data); setError(d.error || "stream error"); } catch (_) {}
             finish();
         });
-        // Connection dropped (or the run no longer exists, e.g. backend restarted).
-        // Stop retrying; the saved task is kept so a later revisit can try again.
-        es.onerror = () => { stop(); setRunning(false); };
+        // Native EventSource error (no status code available). If it fires before any
+        // event arrived, the run is gone — evicted after its retention window, or the
+        // backend restarted. Surface that instead of silently showing an empty board.
+        es.onerror = () => {
+            if (!gotAnyEvent) setError("This run is no longer available for live view (it may have finished and been cleared).");
+            stop();
+            setRunning(false);
+        };
     };
 
-    // On mount, resume a run that's still in progress for this environment.
+    // Keep the sidebar's recent-runs list in sync with what's stored for this env.
+    useEffect(() => { setRuns(runsForUrl(activeUrl)); }, [activeUrl, routeTaskId]);
+
+    // Drive the viewed run from the URL. /selfplay/:taskId attaches to that run;
+    // bare /selfplay re-opens the most recent run for this environment (so the
+    // sidebar link and a fresh visit still restore the live board).
     useEffect(() => {
-        const saved = localStorage.getItem(ACTIVE_KEY);
-        if (saved) {
-            try {
-                const { taskId, url } = JSON.parse(saved);
-                if (url === activeUrl && taskId) subscribeStream(taskId);
-                else localStorage.removeItem(ACTIVE_KEY);
-            } catch (_) { localStorage.removeItem(ACTIVE_KEY); }
+        if (routeTaskId) {
+            subscribeStream(routeTaskId);
+        } else {
+            const recent = runsForUrl(activeUrl)[0];
+            if (recent) navigate(`/selfplay/${recent.taskId}`, { replace: true });
         }
         return () => esRef.current?.close();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeUrl]);
+    }, [activeUrl, routeTaskId]);
 
     const start = async () => {
         stop();
-        localStorage.removeItem(ACTIVE_KEY);
         setError(null);
         setLiveGames([]);
         setSelected(null);
@@ -151,8 +191,12 @@ export default function SelfPlayPage() {
             const taskId = res?.taskId;
             if (!taskId) throw new Error("No taskId returned");
 
-            localStorage.setItem(ACTIVE_KEY, JSON.stringify({ taskId, url: activeUrl }));
-            subscribeStream(taskId);
+            rememberRun({ taskId, url: activeUrl, v1, v2, startedAt: Date.now() });
+            setRuns(runsForUrl(activeUrl));
+            // Give this run its own URL; the route effect subscribes to it. If we're
+            // already on that URL (unlikely — ids are unique), subscribe directly.
+            if (routeTaskId === taskId) subscribeStream(taskId);
+            else navigate(`/selfplay/${taskId}`);
         } catch (err: any) {
             setError(err?.response?.data?.error || err.message);
             setRunning(false);
@@ -239,6 +283,27 @@ export default function SelfPlayPage() {
 
                         {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2">{error}</p>}
                     </div>
+
+                    {/* Recent runs — switch between concurrent / past matches for this env */}
+                    {runs.length > 0 && (
+                        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-lg overflow-hidden shrink-0">
+                            <div className="p-3 border-b border-slate-800 flex items-center gap-2">
+                                <History size={16} className="text-purple-400" />
+                                <h2 className="font-bold text-white text-sm">Recent Runs</h2>
+                            </div>
+                            <div className="max-h-40 overflow-auto p-2 flex flex-col gap-1">
+                                {runs.map(r => (
+                                    <Link key={r.taskId} to={`/selfplay/${r.taskId}`}
+                                        className={`block p-2 rounded-lg text-xs transition-colors ${r.taskId === routeTaskId ? "bg-purple-600/20 border border-purple-500/30 text-white" : "hover:bg-slate-800 border border-transparent text-slate-300"}`}>
+                                        <div className="flex justify-between gap-2">
+                                            <span className="truncate font-mono">{r.v1} vs {r.v2}</span>
+                                            <span className="text-slate-500 shrink-0">{new Date(r.startedAt).toLocaleTimeString()}</span>
+                                        </div>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Games list */}
                     <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl shadow-lg flex flex-col overflow-hidden min-h-0">
