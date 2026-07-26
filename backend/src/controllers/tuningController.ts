@@ -121,11 +121,19 @@ export class TuningController {
         // 1. Build the EPD dataset from recent DB games.
         this.state.phase = "building";
         const recent = await this.dbClient.getRecentGames(games).catch(() => []);
-        const list: any[] = Array.isArray(recent) ? recent : (recent?.games ?? recent?.data ?? []);
+        const list = TuningController.asArray(recent);
         if (list.length === 0) throw new Error("No games in the database to build a tuning dataset");
 
-        const {lines, positions} = await this._buildEpd(list);
-        if (!positions) throw new Error("Dataset is empty — no usable positions from those games");
+        const {lines, positions, stats} = await this._buildEpd(list);
+        if (!positions) {
+            // Report the breakdown so the cause is obvious (no decisive results?
+            // no ingested moves? everything filtered as opening/in-check?).
+            throw new Error(
+                `Dataset is empty — ${stats.games} games, ${stats.decisive} decisive, ` +
+                `${stats.withMoves} with ingested moves, ${stats.candidates} candidate positions. ` +
+                `Tuning needs decisive games whose moves are stored in the database.`,
+            );
+        }
         this.state.positions = positions;
         const epdText = lines.join("\n") + "\n";
 
@@ -201,33 +209,61 @@ export class TuningController {
         }).catch(() => {});
     }
 
+    // How many opening plies to drop before sampling positions (mirrors the
+    // original parsePgnToEpd behaviour: skip the first 12 half-moves).
+    private static readonly OPENING_PLIES = 12;
+
+    // Map a PGN/DB result string to a Texel label, or null if not decisive/known.
+    private static resultLabel(result: any): string | null {
+        if (result === "1-0" || result === "1.0" || result === 1) return "1.0";
+        if (result === "0-1" || result === "0.0" || result === 0) return "0.0";
+        if (result === "1/2-1/2" || result === "0.5" || result === 0.5) return "0.5";
+        return null;
+    }
+
+    // Normalize an API list response to an array, tolerating a `{data:[...]}`
+    // wrapper (Laravel resource collections) even if the transport already unwraps.
+    private static asArray(v: any): any[] {
+        if (Array.isArray(v)) return v;
+        if (Array.isArray(v?.data)) return v.data;
+        if (Array.isArray(v?.moves)) return v.moves;
+        return [];
+    }
+
     // Build Texel EPD lines directly from stored move FENs. Each move row carries
     // `fen_after` (the position after that ply), so no PGN round-trip or replay is
-    // needed — which also means book-opening starts are handled correctly. Mirrors
-    // parsePgnToEpd's filtering: skip the first 12 plies and any in-check position.
-    private async _buildEpd(games: any[]): Promise<{lines: string[]; positions: number}> {
+    // needed — which also means book-opening starts are handled correctly. Skips
+    // the opening and in-check positions, and reports a breakdown so an empty
+    // result is diagnosable (decisive games? games with moves? candidate plies?).
+    private async _buildEpd(games: any[]): Promise<{
+        lines: string[];
+        positions: number;
+        stats: {games: number; decisive: number; withMoves: number; candidates: number};
+    }> {
         const {Chess} = await import("chess.js");
         const lines: string[] = [];
+        let decisive = 0, withMoves = 0, candidates = 0;
 
         for (const game of games) {
-            let label: string | null = null;
-            if (game?.result === "1-0") label = "1.0";
-            else if (game?.result === "0-1") label = "0.0";
-            else if (game?.result === "1/2-1/2") label = "0.5";
+            const label = TuningController.resultLabel(game?.result);
             if (label === null) continue;  // skip unfinished / unknown-result games
+            decisive++;
 
-            const moves = await this.dbClient.getGameMoves(game.id).catch(() => []);
-            if (!Array.isArray(moves) || moves.length === 0) continue;
+            const moves = TuningController.asArray(await this.dbClient.getGameMoves(game.id).catch(() => []));
+            if (moves.length === 0) continue;
+            withMoves++;
 
             for (const mv of moves) {
                 const fen = mv?.fen_after ?? mv?.fenAfter;
-                if (!fen || mv.ply == null || mv.ply <= 12) continue;  // skip the opening
+                const ply = Number(mv?.ply);
+                if (!fen || !Number.isFinite(ply) || ply <= TuningController.OPENING_PLIES) continue;
+                candidates++;
                 let inCheck = false;
                 try { inCheck = new Chess(fen).inCheck(); } catch (_) { /* keep on parse failure */ }
                 if (!inCheck) lines.push(`${fen} c9 "${label}"`);
             }
         }
-        return {lines, positions: lines.length};
+        return {lines, positions: lines.length, stats: {games: games.length, decisive, withMoves, candidates}};
     }
 
     private async _ssh(target: SshTarget, remoteCommand: string): Promise<{code: number; stdout: string; stderr: string}> {
