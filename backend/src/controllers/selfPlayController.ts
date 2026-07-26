@@ -1,5 +1,8 @@
 import {spawn} from "bun";
 import {EventEmitter} from "node:events";
+import {mkdir, writeFile, readFile} from "node:fs/promises";
+import {existsSync} from "node:fs";
+import {join} from "node:path";
 
 // Self-play, fully remote. Per the deployment model, engine matches must run on
 // the remote Linux host over SSH — never on the home server. This controller:
@@ -256,6 +259,21 @@ interface RunState {
 // still replay its games, before it's evicted to keep the runs map bounded.
 const RUN_RETENTION_MS = 5 * 60_000;
 
+// Local dir (inside the backend) where each finished match's full PGN is archived
+// by task id, so completed runs stay viewable after the in-memory run state is
+// evicted (RUN_RETENTION_MS) or the server restarts.
+const LOCAL_STORAGE_DIR = process.env.SELFPLAY_STORAGE_DIR ?? "storage";
+
+// Task ids are minted as `selfplay-<epochMs>` (see run()). Validate before using
+// one in a filesystem path so a crafted :taskId can't traverse out of storage.
+export function isValidTaskId(id: unknown): id is string {
+    return typeof id === "string" && /^selfplay-\d+$/.test(id);
+}
+
+export function localPgnPath(taskId: string): string {
+    return join(LOCAL_STORAGE_DIR, `selfplay_${taskId}.pgn`);
+}
+
 export class SelfPlayController {
     private runs = new Map<string, RunState>();
     private spawnFn: any;
@@ -394,6 +412,54 @@ export class SelfPlayController {
         req.on("close", cleanup);
     }
 
+    // GET /api/selfplay/games/:taskId — a run's games for (non-live) replay.
+    // Serves the in-memory run if still present, else the archived PGN of a
+    // finished run. Always 200 with a `status`/`running` so the UI can render a
+    // clean state — a running run tells the client to open the SSE stream, an
+    // evicted one shows "unavailable" instead of surfacing a 404 error.
+    games = async (req: any, res: any): Promise<any> => {
+        const taskId = req.params.taskId;
+        if (!isValidTaskId(taskId)) {
+            return res.json({status: "unavailable", running: false, games: []});
+        }
+
+        const live = this.runs.get(taskId);
+        if (live) {
+            return res.json({
+                status: live.status,
+                running: live.status === "running",
+                elo: live.elo,
+                progress: live.progress,
+                games: live.games,
+            });
+        }
+
+        const path = localPgnPath(taskId);
+        if (existsSync(path)) {
+            let pgnText = "";
+            try { pgnText = await readFile(path, "utf8"); } catch (_) { /* fall through to empty */ }
+            const games = splitCompletedGames(pgnText);
+
+            // A PGN file only exists once a match finished, so this is complete.
+            // Pull the recorded Elo from the persisted task if it's available.
+            let elo = null;
+            try {
+                const task = await this.taskManager.getTask(taskId);
+                if (task?.result?.elo) elo = task.result.elo;
+            } catch (_) { /* best-effort */ }
+
+            return res.json({
+                status: "completed",
+                running: false,
+                elo,
+                progress: {completed: games.length, total: games.length},
+                games,
+            });
+        }
+
+        return res.json({status: "unavailable", running: false, games: []});
+    }
+
     private async _execute(state: RunState, target: SshTarget, req: SelfPlayRequest, opts: {analyze: boolean}) {
         // 1. Build any requested tags on the remote (cached, no-op for "current").
         for (const version of [req.v1, req.v2]) {
@@ -442,6 +508,15 @@ export class SelfPlayController {
 
         // 4. Pull the final PGN and ingest it into the DB.
         const {stdout: fullPgn} = await this._sshOnce(target, `cat "${req.pgnOut}"`);
+
+        // Archive the full PGN locally, keyed by task id, so this run stays
+        // replayable via games() after it's evicted from memory or the server
+        // restarts. Best-effort — the DB ingest below is the source of truth.
+        try {
+            await mkdir(LOCAL_STORAGE_DIR, {recursive: true});
+            await writeFile(localPgnPath(state.taskId), fullPgn);
+        } catch (_) { /* non-fatal: live stream + DB ingest still work */ }
+
         const ingest = await this.pgnManager.ingestPgnString(fullPgn);
 
         state.status = "completed";

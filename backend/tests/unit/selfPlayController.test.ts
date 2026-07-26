@@ -11,10 +11,34 @@ import {
     parseGitTags,
     defaultRemoteConfig,
     substituteHome,
+    isValidTaskId,
+    localPgnPath,
     type RemoteConfig,
 } from "../../src/controllers/selfPlayController.ts";
 
 const cfg: RemoteConfig = {repoDir: "/home/bot/jb", cutechess: "cutechess-cli", openingBook: "/home/bot/jb/tools/book.epd"};
+
+describe("isValidTaskId", () => {
+    it("accepts the minted `selfplay-<epochMs>` form", () => {
+        expect(isValidTaskId("selfplay-1785069592072")).toBe(true);
+    });
+
+    it("rejects path-traversal and injection attempts used as a filename", () => {
+        expect(isValidTaskId("selfplay-1/../../etc/passwd")).toBe(false);
+        expect(isValidTaskId("../secrets")).toBe(false);
+        expect(isValidTaskId("selfplay-1;rm -rf /")).toBe(false);
+        expect(isValidTaskId("selfplay-")).toBe(false);
+        expect(isValidTaskId("gauntlet-123")).toBe(false);
+        expect(isValidTaskId(42 as any)).toBe(false);
+        expect(isValidTaskId(undefined as any)).toBe(false);
+    });
+});
+
+describe("localPgnPath", () => {
+    it("names the archive by task id under the storage dir", () => {
+        expect(localPgnPath("selfplay-123")).toContain("selfplay_selfplay-123.pgn");
+    });
+});
 
 describe("sshTargetFromEnv", () => {
     it("returns null when remote execution is disabled", () => {

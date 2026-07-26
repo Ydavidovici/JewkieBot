@@ -210,6 +210,14 @@ export const runSelfPlay = (options, baseUrl = null) =>
         baseUrl
     });
 
+// A run's games for replay: the live run if still in memory, else the archived
+// PGN of a finished run. Returns { status, running, elo, progress, games }.
+export const getSelfPlayGames = (taskId, baseUrl = null) =>
+    request(`/api/selfplay/games/${taskId}`, {
+        method: "GET",
+        baseUrl
+    });
+
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",

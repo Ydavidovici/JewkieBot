@@ -3,7 +3,7 @@ import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Swords, Play, ChevronLeft, ChevronRight, Activity, Cpu, History } from "lucide-react";
-import { getSelfPlayVersions, runSelfPlay } from "../services/api.js";
+import { getSelfPlayVersions, runSelfPlay, getSelfPlayGames } from "../services/api.js";
 import { useBot } from "../context/BotContext.jsx";
 
 // Recent self-play runs, keyed per environment URL, so the live view can be
@@ -152,15 +152,53 @@ export default function SelfPlayPage() {
         };
     };
 
+    // Open a run by id: a still-running run streams live over SSE; a finished run
+    // is replayed statically from its archived games (so it stays viewable after
+    // eviction / a server restart, with no doomed 404 on the stream endpoint).
+    const loadTask = async (taskId: string) => {
+        stop();
+        setError(null);
+        setLiveGames([]);
+        setSelected(null);
+        setPly(0);
+        setElo(null);
+        setProgress({ completed: 0, total: 0 });
+
+        try {
+            const data: any = await getSelfPlayGames(taskId, activeUrl);
+
+            if (data?.running) {
+                subscribeStream(taskId);   // live: SSE replays games-so-far, then streams
+                return;
+            }
+
+            const decoded = (data?.games ?? []).map((pgn: string, i: number) => decodeGame(i, pgn));
+            setLiveGames(decoded);
+            const last = decoded.length - 1;
+            setSelected(last >= 0 ? last : null);
+            setPly(last >= 0 ? decoded[last].fens.length : 0);
+            if (data?.elo) setElo(data.elo);
+            if (data?.progress) setProgress(data.progress);
+            setRunning(false);
+
+            if (data?.status === "unavailable" || decoded.length === 0) {
+                setError("This run's games weren't archived and it's no longer in memory, so it can't be replayed.");
+            }
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to load run");
+            setRunning(false);
+        }
+    };
+
     // Keep the sidebar's recent-runs list in sync with what's stored for this env.
     useEffect(() => { setRuns(runsForUrl(activeUrl)); }, [activeUrl, routeTaskId]);
 
-    // Drive the viewed run from the URL. /selfplay/:taskId attaches to that run;
+    // Drive the viewed run from the URL. /selfplay/:taskId opens that run;
     // bare /selfplay re-opens the most recent run for this environment (so the
-    // sidebar link and a fresh visit still restore the live board).
+    // sidebar link and a fresh visit still restore the board).
     useEffect(() => {
         if (routeTaskId) {
-            subscribeStream(routeTaskId);
+            loadTask(routeTaskId);
         } else {
             const recent = runsForUrl(activeUrl)[0];
             if (recent) navigate(`/selfplay/${recent.taskId}`, { replace: true });
