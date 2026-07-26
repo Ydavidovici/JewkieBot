@@ -218,6 +218,12 @@ export const getSelfPlayGames = (taskId, baseUrl = null) =>
         baseUrl
     });
 
+export const stopSelfPlay = (taskId, baseUrl = null) =>
+    request(`/api/selfplay/stop/${taskId}`, {
+        method: "POST",
+        baseUrl
+    });
+
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",

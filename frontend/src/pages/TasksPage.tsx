@@ -39,6 +39,16 @@ export default function TasksPage() {
         }
     };
 
+    const stopTask = async (taskId) => {
+        try {
+            await fetch(`/api/selfplay/stop/${taskId}`, {method: "POST"});
+        } catch (e) {
+            console.error("Failed to stop task", e);
+        } finally {
+            fetchTasks();
+        }
+    };
+
     useEffect(() => {
         fetchTasks();
         const interval = setInterval(fetchTasks, 2000);
@@ -282,6 +292,14 @@ export default function TasksPage() {
                                             </span>
                                         </div>
                                         <p className="text-xs text-slate-500">{task.id}</p>
+                                        {viewable && task.status === "RUNNING" && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); stopTask(task.id); }}
+                                                className="self-start px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors"
+                                            >
+                                                Stop
+                                            </button>
+                                        )}
                                         {task.progress && (
                                             <div className="text-xs text-slate-400 bg-slate-900 p-2 rounded">
                                                 {typeof task.progress === "string" ? task.progress : JSON.stringify(task.progress)}

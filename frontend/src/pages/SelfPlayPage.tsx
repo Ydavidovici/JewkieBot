@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Swords, Play, ChevronLeft, ChevronRight, Activity, Cpu, History } from "lucide-react";
-import { getSelfPlayVersions, runSelfPlay, getSelfPlayGames } from "../services/api.js";
+import { Swords, Play, Square, ChevronLeft, ChevronRight, Activity, Cpu, History } from "lucide-react";
+import { getSelfPlayVersions, runSelfPlay, getSelfPlayGames, stopSelfPlay } from "../services/api.js";
 import { useBot } from "../context/BotContext.jsx";
 
 // Recent self-play runs, keyed per environment URL, so the live view can be
@@ -83,6 +83,7 @@ export default function SelfPlayPage() {
     const [liveGames, setLiveGames] = useState<LiveGame[]>([]);
     const [selected, setSelected] = useState<number | null>(null);
     const [ply, setPly] = useState(0);
+    const [loadingTask, setLoadingTask] = useState(false);
     const esRef = useRef<EventSource | null>(null);
 
     // Load selectable versions (release tags + "current") for the active target.
@@ -163,6 +164,7 @@ export default function SelfPlayPage() {
         setPly(0);
         setElo(null);
         setProgress({ completed: 0, total: 0 });
+        setLoadingTask(true);
 
         try {
             const data: any = await getSelfPlayGames(taskId, activeUrl);
@@ -182,11 +184,13 @@ export default function SelfPlayPage() {
             setRunning(false);
 
             if (data?.status === "unavailable" || decoded.length === 0) {
-                setError("This run's games weren't archived and it's no longer in memory, so it can't be replayed.");
+                setError("This run's games couldn't be found — the match may never have finished, or its PGN was cleaned up.");
             }
         } catch (err: any) {
             setError(err?.response?.data?.error || err.message || "Failed to load run");
             setRunning(false);
+        } finally {
+            setLoadingTask(false);
         }
     };
 
@@ -238,6 +242,18 @@ export default function SelfPlayPage() {
         } catch (err: any) {
             setError(err?.response?.data?.error || err.message);
             setRunning(false);
+        }
+    };
+
+    const stopRun = async () => {
+        const id = routeTaskId;
+        if (!id) return;
+        try {
+            await stopSelfPlay(id, activeUrl);
+            // The SSE 'done' event flips `running` off; this is just immediate feedback.
+            setRunning(false);
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to stop run");
         }
     };
 
@@ -314,10 +330,17 @@ export default function SelfPlayPage() {
                             Analyze games after (Stockfish + jewkiebot)
                         </label>
 
-                        <button onClick={start} disabled={running}
-                            className="mt-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors">
-                            <Play size={16} fill="currentColor" /> {running ? "Running…" : "Run Match"}
-                        </button>
+                        {running ? (
+                            <button onClick={stopRun}
+                                className="mt-1 bg-red-600 hover:bg-red-500 text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                                <Square size={14} fill="currentColor" /> Stop Match
+                            </button>
+                        ) : (
+                            <button onClick={start}
+                                className="mt-1 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                                <Play size={16} fill="currentColor" /> Run Match
+                            </button>
+                        )}
 
                         {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2">{error}</p>}
                     </div>
@@ -359,7 +382,11 @@ export default function SelfPlayPage() {
                                     </div>
                                 </button>
                             ))}
-                            {liveGames.length === 0 && <p className="text-center italic mt-4 text-slate-500 text-xs">No games yet.</p>}
+                            {liveGames.length === 0 && (
+                                <p className="text-center italic mt-4 text-slate-500 text-xs">
+                                    {loadingTask ? "Loading run…" : "No games yet."}
+                                </p>
+                            )}
                         </div>
                     </div>
                 </div>

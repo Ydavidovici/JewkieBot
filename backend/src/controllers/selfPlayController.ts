@@ -253,6 +253,9 @@ interface RunState {
     games: string[];
     emitter: EventEmitter;
     error?: string;
+    pgnOut?: string;            // remote PGN path — also used to target the remote process on stop
+    stopRequested?: boolean;    // set by stopRun(); _execute finishes gracefully instead of erroring
+    procs?: {match?: any; tail?: any};  // spawned handles, killed on stop
 }
 
 // Grace period a finished run lingers in memory so late SSE subscribers can
@@ -335,6 +338,8 @@ export class SelfPlayController {
             elo: null,
             games: [],
             emitter: new EventEmitter(),
+            pgnOut,
+            procs: {},
         };
         state.emitter.setMaxListeners(0);
         state.emitter.on("error", () => {});
@@ -413,10 +418,12 @@ export class SelfPlayController {
     }
 
     // GET /api/selfplay/games/:taskId — a run's games for (non-live) replay.
-    // Serves the in-memory run if still present, else the archived PGN of a
-    // finished run. Always 200 with a `status`/`running` so the UI can render a
-    // clean state — a running run tells the client to open the SSE stream, an
-    // evicted one shows "unavailable" instead of surfacing a 404 error.
+    // Resolution order: the in-memory run (still streaming or just finished) →
+    // the local PGN archive → the persisted task's remote PGN (older runs, or
+    // runs whose local archive was lost), reconstructed over SSH and cached
+    // locally. Always 200 with a `status`/`running` so the UI can render a clean
+    // state — a running run tells the client to open the SSE stream, a truly
+    // gone one shows "unavailable" instead of surfacing a 404 error.
     games = async (req: any, res: any): Promise<any> => {
         const taskId = req.params.taskId;
         if (!isValidTaskId(taskId)) {
@@ -434,30 +441,65 @@ export class SelfPlayController {
             });
         }
 
+        const completedResponse = (games: string[], elo: any) => res.json({
+            status: "completed",
+            running: false,
+            elo: elo ?? null,
+            progress: {completed: games.length, total: games.length},
+            games,
+        });
+
+        // 1. Local archive — written when a run completes under the current code.
         const path = localPgnPath(taskId);
         if (existsSync(path)) {
             let pgnText = "";
             try { pgnText = await readFile(path, "utf8"); } catch (_) { /* fall through to empty */ }
-            const games = splitCompletedGames(pgnText);
-
-            // A PGN file only exists once a match finished, so this is complete.
-            // Pull the recorded Elo from the persisted task if it's available.
             let elo = null;
-            try {
-                const task = await this.taskManager.getTask(taskId);
-                if (task?.result?.elo) elo = task.result.elo;
-            } catch (_) { /* best-effort */ }
-
-            return res.json({
-                status: "completed",
-                running: false,
-                elo,
-                progress: {completed: games.length, total: games.length},
-                games,
-            });
+            try { elo = (await this.taskManager.getTask(taskId))?.result?.elo ?? null; } catch (_) { /* best-effort */ }
+            return completedResponse(splitCompletedGames(pgnText), elo);
         }
 
+        // 2. Fallback — reconstruct from the persisted task's remote PGN (covers
+        // runs created before local archiving existed), and cache it locally so
+        // subsequent views are instant and survive the remote file being cleaned up.
+        try {
+            const task = await this.taskManager.getTask(taskId);
+            const remotePgn = task?.result?.pgnFile;
+            const target = sshTargetFromEnv();
+            if (task?.status === "COMPLETED" && remotePgn && target) {
+                const {code, stdout} = await this._sshOnce(target, `cat "${remotePgn}"`);
+                if (code === 0 && stdout.trim()) {
+                    try {
+                        await mkdir(LOCAL_STORAGE_DIR, {recursive: true});
+                        await writeFile(path, stdout);
+                    } catch (_) { /* caching is best-effort */ }
+                    return completedResponse(splitCompletedGames(stdout), task?.result?.elo);
+                }
+            }
+        } catch (_) { /* fall through to unavailable */ }
+
         return res.json({status: "unavailable", running: false, games: []});
+    }
+
+    // POST /api/selfplay/stop/:taskId — stop a running match. Flags the run so
+    // _execute finishes gracefully, then kills the remote cutechess (targeted by
+    // its unique per-task PGN path — closing the local ssh process alone can leave
+    // the remote process orphaned) plus the local ssh/tail handles.
+    stopRun = async (req: any, res: any): Promise<any> => {
+        const state = this.runs.get(req.params.taskId);
+        if (!state) return res.status(404).json({error: "Unknown self-play task"});
+        if (state.status !== "running") return res.status(409).json({error: "Run is not active"});
+
+        state.stopRequested = true;
+
+        const target = sshTargetFromEnv();
+        if (target && state.pgnOut) {
+            this._sshOnce(target, `pkill -f ${JSON.stringify(state.pgnOut)}`).catch(() => {});
+        }
+        try { state.procs?.match?.kill(); } catch (_) {}
+        try { state.procs?.tail?.kill(); } catch (_) {}
+
+        return res.json({status: "stopping", taskId: req.params.taskId});
     }
 
     private async _execute(state: RunState, target: SshTarget, req: SelfPlayRequest, opts: {analyze: boolean}) {
@@ -470,6 +512,7 @@ export class SelfPlayController {
 
         // 2. Tail the PGN so finished games stream back live.
         const tail = this.spawnFn({cmd: sshArgs(target, `tail -n +1 -F "${req.pgnOut}" 2>/dev/null`), stdout: "pipe", stderr: "pipe"});
+        state.procs!.tail = tail;
         let pgnBuffer = "";
         (async () => {
             const dec = new TextDecoder();
@@ -486,6 +529,7 @@ export class SelfPlayController {
 
         // 3. Run cutechess on the remote, parsing stdout for progress + Elo.
         const match = this.spawnFn({cmd: sshArgs(target, cutechessCommand(req, this.cfg)), stdout: "pipe", stderr: "pipe"});
+        state.procs!.match = match;
         let matchOut = "";
         (async () => {
             const dec = new TextDecoder();
@@ -500,6 +544,27 @@ export class SelfPlayController {
 
         const code = await match.exited;
         try { tail.kill(); } catch (_) {}
+
+        // User-requested stop: cutechess was killed, so a non-zero exit here is
+        // expected, not a crash. Archive whatever games finished so the partial
+        // run stays replayable, then end gracefully instead of reporting an error.
+        if (state.stopRequested) {
+            try {
+                const {stdout: partialPgn} = await this._sshOnce(target, `cat "${req.pgnOut}" 2>/dev/null`);
+                if (partialPgn.trim()) {
+                    await mkdir(LOCAL_STORAGE_DIR, {recursive: true});
+                    await writeFile(localPgnPath(state.taskId), partialPgn);
+                    await this.pgnManager.ingestPgnString(partialPgn).catch(() => {});
+                }
+            } catch (_) { /* best-effort archive/ingest of partial games */ }
+
+            state.status = "completed";
+            state.emitter.emit("done", {status: "completed", stopped: true, progress: state.progress, elo: state.elo});
+            await this.taskManager.updateTaskStatus(state.taskId, "COMPLETED", {
+                stopped: true, elo: state.elo, pgnFile: req.pgnOut, progress: state.progress,
+            }).catch(() => {});
+            return;
+        }
 
         if (code !== 0) {
             const stderr = await new Response(match.stderr).text().catch(() => "");

@@ -104,6 +104,7 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.post("/api/selfplay/run", selfPlayController.run);
     app.get("/api/selfplay/stream/:taskId", selfPlayController.stream);
     app.get("/api/selfplay/games/:taskId", selfPlayController.games);
+    app.post("/api/selfplay/stop/:taskId", selfPlayController.stopRun);
 
     app.post("/api/pgn/ingest", pgnController.ingestString);
     app.post("/api/pgn/ingest-file", pgnController.ingestFile);
