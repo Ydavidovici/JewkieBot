@@ -52,7 +52,6 @@ export class TuningController {
 
     constructor(
         private taskManager: any,
-        private pgnManager: any,
         private dbClient: any,
         private engineManager: any,
         private evalParamsPath: string,
@@ -122,14 +121,13 @@ export class TuningController {
         // 1. Build the EPD dataset from recent DB games.
         this.state.phase = "building";
         const recent = await this.dbClient.getRecentGames(games).catch(() => []);
-        const ids = (recent ?? []).map((g: any) => g.id).filter(Boolean);
-        if (ids.length === 0) throw new Error("No games in the database to build a tuning dataset");
+        const list: any[] = Array.isArray(recent) ? recent : (recent?.games ?? recent?.data ?? []);
+        if (list.length === 0) throw new Error("No games in the database to build a tuning dataset");
 
-        const pgn = await this.pgnManager.generatePgn(ids);
-        const {epdLines, positionCount} = this.pgnManager.parsePgnToEpd(pgn);
-        if (!positionCount) throw new Error("Dataset is empty — no usable positions from those games");
-        this.state.positions = positionCount;
-        const epdText = epdLines.join("\n") + "\n";
+        const {lines, positions} = await this._buildEpd(list);
+        if (!positions) throw new Error("Dataset is empty — no usable positions from those games");
+        this.state.positions = positions;
+        const epdText = lines.join("\n") + "\n";
 
         // 2. Ship the dataset to the remote.
         this.state.phase = "shipping";
@@ -201,6 +199,35 @@ export class TuningController {
         await this.taskManager.updateTaskStatus(this.state.taskId, "COMPLETED", {
             positions: this.state.positions, epochs: this.state.epoch, mse: this.state.mse, params: params.length,
         }).catch(() => {});
+    }
+
+    // Build Texel EPD lines directly from stored move FENs. Each move row carries
+    // `fen_after` (the position after that ply), so no PGN round-trip or replay is
+    // needed — which also means book-opening starts are handled correctly. Mirrors
+    // parsePgnToEpd's filtering: skip the first 12 plies and any in-check position.
+    private async _buildEpd(games: any[]): Promise<{lines: string[]; positions: number}> {
+        const {Chess} = await import("chess.js");
+        const lines: string[] = [];
+
+        for (const game of games) {
+            let label: string | null = null;
+            if (game?.result === "1-0") label = "1.0";
+            else if (game?.result === "0-1") label = "0.0";
+            else if (game?.result === "1/2-1/2") label = "0.5";
+            if (label === null) continue;  // skip unfinished / unknown-result games
+
+            const moves = await this.dbClient.getGameMoves(game.id).catch(() => []);
+            if (!Array.isArray(moves) || moves.length === 0) continue;
+
+            for (const mv of moves) {
+                const fen = mv?.fen_after ?? mv?.fenAfter;
+                if (!fen || mv.ply == null || mv.ply <= 12) continue;  // skip the opening
+                let inCheck = false;
+                try { inCheck = new Chess(fen).inCheck(); } catch (_) { /* keep on parse failure */ }
+                if (!inCheck) lines.push(`${fen} c9 "${label}"`);
+            }
+        }
+        return {lines, positions: lines.length};
     }
 
     private async _ssh(target: SshTarget, remoteCommand: string): Promise<{code: number; stdout: string; stderr: string}> {

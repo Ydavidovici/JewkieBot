@@ -32,7 +32,7 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     const tournamentController = new TournamentController(taskManager, pgnManager);
     const selfPlayController = new SelfPlayController(taskManager, pgnManager, analyzer);
     const tuningController = new TuningController(
-        taskManager, pgnManager, dbClient, engineManager,
+        taskManager, dbClient, engineManager,
         path.resolve(__dirname, "../../engines/jewkiebot/eval_params.txt"),
     );
 
