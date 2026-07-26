@@ -1,8 +1,11 @@
 #include "evaluator.h"
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <fstream>
 #include <mutex>
+#include <sstream>
+#include <vector>
 
 namespace {
 
@@ -473,6 +476,86 @@ std::string Evaluator::exportParameters() const {
         out += '\n';
     }
     return out;
+}
+
+namespace {
+    // Texel sigmoid with the conventional scaling constant (K≈400 in cp units).
+    double tuneSigmoid(double eval) { return 1.0 / (1.0 + std::pow(10.0, -eval / 400.0)); }
+
+    struct TuningEntry { Board board; double result; };
+}
+
+bool Evaluator::tuneFromDataset(const std::string& datasetPath, const std::string& outputPath,
+                                int maxEpochs, const std::function<void(int, double)>& onEpoch) {
+    std::ifstream file(datasetPath);
+    if (!file.is_open()) return false;
+
+    std::vector<TuningEntry> dataset;
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        // Each line: "<fen fields> c9 \"<result>\"".
+        size_t c9 = line.find("c9 \"");
+        if (c9 == std::string::npos) continue;
+
+        std::string fen = line.substr(0, c9 - 1);
+        size_t rs = c9 + 4;
+        size_t re = line.find('"', rs);
+        std::string result_str = line.substr(rs, re - rs);
+
+        double result = 0.5;
+        if (result_str == "1.0" || result_str == "1-0") result = 1.0;
+        else if (result_str == "0.0" || result_str == "0-1") result = 0.0;
+
+        Board b;
+        b.loadFEN(fen);
+        dataset.push_back({b, result});
+    }
+    if (dataset.empty()) return false;
+
+    auto mse = [&]() {
+        double total = 0.0;
+        for (const auto& e : dataset) {
+            int ev = evaluate(e.board, e.board.sideToMove());
+            if (e.board.sideToMove() == Color::BLACK) ev = -ev;  // to White's perspective
+            double diff = e.result - tuneSigmoid(static_cast<double>(ev));
+            total += diff * diff;
+        }
+        return total / static_cast<double>(dataset.size());
+    };
+
+    const int count = getParameterCount();
+    double best = mse();
+    if (onEpoch) onEpoch(0, best);
+
+    for (int epoch = 1; epoch <= maxEpochs; ++epoch) {
+        bool improved = false;
+        for (int p = 0; p < count; ++p) {
+            const int orig = getParameter(p);
+
+            setParameter(p, orig + 1); updateBlackTables();
+            const double plus = mse();
+            setParameter(p, orig - 1); updateBlackTables();
+            const double minus = mse();
+
+            if (plus < best && plus <= minus) {
+                setParameter(p, orig + 1); updateBlackTables();
+                best = plus; improved = true;
+            } else if (minus < best) {
+                setParameter(p, orig - 1); updateBlackTables();
+                best = minus; improved = true;
+            } else {
+                setParameter(p, orig); updateBlackTables();  // restore
+            }
+        }
+        if (onEpoch) onEpoch(epoch, best);
+        if (!improved) break;  // converged
+    }
+
+    std::ofstream out(outputPath);
+    if (!out.is_open()) return false;
+    for (int i = 0; i < count; ++i) out << getParameter(i) << "\n";
+    return true;
 }
 
 void Evaluator::updateBlackTables() {

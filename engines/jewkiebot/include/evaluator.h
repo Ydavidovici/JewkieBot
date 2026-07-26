@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <functional>
 
 class Evaluator {
 public:
@@ -28,6 +29,15 @@ public:
     // Dump the current parameters as one integer per line (getParameter order),
     // so a caller can read back defaults / what's currently applied.
     std::string exportParameters() const;
+
+    // Texel coordinate-descent tuning against an EPD dataset (each line a FEN
+    // followed by c9 "<result>", result in {1.0,0.5,0.0} or PGN tokens). Mutates
+    // this evaluator toward the params that minimise sigmoid MSE, writes them as
+    // a raw one-per-line vector to outputPath, and calls onEpoch(epoch, mse) each
+    // pass (epoch 0 = initial). Returns false on a missing/empty dataset or write
+    // failure. Stops early when an epoch yields no improvement.
+    bool tuneFromDataset(const std::string& datasetPath, const std::string& outputPath,
+                         int maxEpochs, const std::function<void(int, double)>& onEpoch);
 
 private:
     int evaluateMaterial(const Board& board) const;

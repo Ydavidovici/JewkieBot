@@ -237,6 +237,17 @@ export const applyTuningParams = (params, baseUrl = null) =>
 export const clearTuningParams = (baseUrl = null) =>
     request("/api/engine/tuning", { method: "DELETE", baseUrl });
 
+// Server-driven tuning (remote over SSH): build a dataset from DB games, run the
+// Texel tuner on the remote host, then apply the result.
+export const runServerTuning = (options, baseUrl = null) =>
+    request("/api/engine/tuning/run", { method: "POST", data: options, baseUrl });
+
+export const getServerTuningStatus = (baseUrl = null) =>
+    request("/api/engine/tuning/status", { method: "GET", baseUrl });
+
+export const stopServerTuning = (baseUrl = null) =>
+    request("/api/engine/tuning/stop", { method: "POST", baseUrl });
+
 export const getRecentGames = (limit = 10, dbUrl = null) =>
     request(`/api/v1/chess/games/recent?limit=${limit}`, {
         method: "GET",

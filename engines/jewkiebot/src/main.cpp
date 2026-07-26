@@ -20,6 +20,7 @@ static void handle_bench(const std::string& line, Engine& engine);
 static void handle_eval(const std::string& line, Engine& engine);
 static void handle_setoption(const std::string& line, Engine& engine);
 static void handle_evalparams(const std::string& line, Engine& engine);
+static void handle_tune(const std::string& line, Engine& engine);
 
 static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"uci", handle_uci},
@@ -33,6 +34,7 @@ static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"setoption", handle_setoption},
     {"stop", handle_stop},
     {"evalparams", handle_evalparams},
+    {"tune", handle_tune},
 };
 
 static std::string trim(const std::string& s) {
@@ -268,6 +270,34 @@ static void handle_evalparams(const std::string& line, Engine& engine) {
         if (!value.empty()) std::cout << "evalparam " << index++ << " " << value << "\n";
     }
     std::cout << "evalparamsok\n";
+    std::cout.flush();
+}
+
+// tune <dataset.epd> <output.txt> [maxEpochs]
+// Runs Texel tuning, streaming "tune epoch <n> mse <x>" lines, and writes the
+// optimized raw parameter vector to <output.txt>. Terminated by "tuneok".
+static void handle_tune(const std::string& line, Engine& engine) {
+    std::vector<std::string> tokens = tokenize(line);
+    if (tokens.size() < 3) {
+        std::cout << "info string usage: tune <dataset.epd> <output.txt> [maxEpochs]\n";
+        std::cout.flush();
+        return;
+    }
+    const std::string dataset = tokens[1];
+    const std::string output = tokens[2];
+    int maxEpochs = 100;
+    if (tokens.size() > 3) { try { maxEpochs = std::stoi(tokens[3]); } catch (...) {} }
+
+    engine.stopSearch();
+    engine.waitSearch();
+
+    bool ok = engine.runTuning(dataset, output, maxEpochs, [](int epoch, double mse) {
+        std::cout << "tune epoch " << epoch << " mse " << std::to_string(mse) << "\n";
+        std::cout.flush();
+    });
+
+    if (ok) std::cout << "tuneok " << output << "\n";
+    else std::cout << "info string tuning failed (dataset missing/empty or write error)\n";
     std::cout.flush();
 }
 

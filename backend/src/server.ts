@@ -12,6 +12,7 @@ import {dbClient} from "./dbClient.js";
 import {ChessComController} from "./controllers/chessComController.js";
 import {TournamentController} from "./controllers/tournamentController.js";
 import {SelfPlayController} from "./controllers/selfPlayController.ts";
+import {TuningController} from "./controllers/tuningController.ts";
 import {PgnController} from "./controllers/pgnController.js";
 import {TasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
@@ -30,6 +31,10 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     const chessComController = new ChessComController(pgnManager);
     const tournamentController = new TournamentController(taskManager, pgnManager);
     const selfPlayController = new SelfPlayController(taskManager, pgnManager, analyzer);
+    const tuningController = new TuningController(
+        taskManager, pgnManager, dbClient, engineManager,
+        path.resolve(__dirname, "../../engines/jewkiebot/eval_params.txt"),
+    );
 
     app.use(cors({
         origin: "*",
@@ -78,6 +83,9 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.get("/api/engine/tuning", engineController.getTuning);
     app.post("/api/engine/tuning", engineController.applyTuning);
     app.delete("/api/engine/tuning", engineController.clearTuning);
+    app.get("/api/engine/tuning/status", tuningController.status);
+    app.post("/api/engine/tuning/run", tuningController.run);
+    app.post("/api/engine/tuning/stop", tuningController.stopRun);
     app.post("/api/engine/go", engineController.go);
     app.post("/api/engine/reset", engineController.reset);
     app.post("/api/engine/bench", engineController.bench);

@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from "react";
-import { SlidersHorizontal, Check, RotateCcw, Download, Upload } from "lucide-react";
-import { getTuningParams, applyTuningParams, clearTuningParams } from "../services/api.js";
+import React, { useState, useEffect, useRef } from "react";
+import { SlidersHorizontal, Check, RotateCcw, Download, Upload, Play, Square, Server } from "lucide-react";
+import {
+    getTuningParams, applyTuningParams, clearTuningParams,
+    runServerTuning, getServerTuningStatus, stopServerTuning,
+} from "../services/api.js";
 import { useBot } from "../context/BotContext.jsx";
 
 // Applies the results of an external Texel tuning run: paste/upload the tuned
@@ -16,6 +19,12 @@ export default function TuningPage() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+
+    // Server-driven tuning run
+    const [games, setGames] = useState(200);
+    const [maxEpochs, setMaxEpochs] = useState(50);
+    const [runStatus, setRunStatus] = useState<any>(null);
+    const pollRef = useRef<any>(null);
 
     const load = async () => {
         setLoading(true);
@@ -35,6 +44,52 @@ export default function TuningPage() {
     };
 
     useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeUrl]);
+
+    // Poll the server-tuning status. Starts on mount (to re-attach to a run in
+    // progress) and keeps polling while a run is active; on completion it reloads
+    // the applied params into the editor.
+    useEffect(() => {
+        const tick = async () => {
+            try {
+                const s: any = await getServerTuningStatus(activeUrl);
+                setRunStatus(s);
+                if (s?.running) {
+                    if (!pollRef.current) pollRef.current = setInterval(tick, 2000);
+                } else {
+                    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+                    if (s?.phase === "done") load();  // pull the newly applied params in
+                }
+            } catch (_) { /* leave status as-is */ }
+        };
+        tick();
+        return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeUrl]);
+
+    const startRun = async () => {
+        setError(null);
+        setNotice(null);
+        try {
+            await runServerTuning({ games: Number(games), maxEpochs: Number(maxEpochs) }, activeUrl);
+            const s: any = await getServerTuningStatus(activeUrl);
+            setRunStatus(s);
+            if (!pollRef.current) pollRef.current = setInterval(async () => {
+                const st: any = await getServerTuningStatus(activeUrl).catch(() => null);
+                if (st) setRunStatus(st);
+                if (st && !st.running) { clearInterval(pollRef.current); pollRef.current = null; if (st.phase === "done") load(); }
+            }, 2000);
+        } catch (err: any) {
+            setError(err?.response?.data?.error || err.message || "Failed to start tuning");
+        }
+    };
+
+    const stopServer = async () => {
+        try { await stopServerTuning(activeUrl); } catch (err: any) {
+            setError(err?.response?.data?.error || err.message);
+        }
+    };
+
+    const running = !!runStatus?.running;
 
     // Count the integers the user has entered, to validate against the engine's count.
     const entered = text.split(/\s+/).filter(Boolean);
@@ -90,6 +145,57 @@ export default function TuningPage() {
                     engine will use it on every spawn.
                 </p>
             </header>
+
+            {/* Server-driven tuning: build a dataset from DB games and run the
+                Texel tuner on the remote host over SSH, then auto-apply. */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-lg p-5 flex flex-col gap-4">
+                <h2 className="font-bold text-white flex items-center gap-2">
+                    <Server size={18} className="text-purple-400" /> Run tuning on server
+                </h2>
+                <p className="text-sm text-slate-400 -mt-2">
+                    Builds a Texel dataset from recent games in the database, runs the tuner on
+                    the remote host, and applies the optimized parameters automatically.
+                </p>
+
+                <div className="flex items-end gap-4 flex-wrap">
+                    <div>
+                        <label className="block text-xs text-slate-400 font-semibold mb-1">DB games</label>
+                        <input type="number" min={10} step={10} value={games} disabled={running}
+                            onChange={e => setGames(Number(e.target.value))}
+                            className="w-28 bg-slate-950 border border-slate-700 text-sm text-white px-3 py-2 rounded-lg focus:outline-none focus:border-purple-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-400 font-semibold mb-1">Max epochs</label>
+                        <input type="number" min={1} value={maxEpochs} disabled={running}
+                            onChange={e => setMaxEpochs(Number(e.target.value))}
+                            className="w-28 bg-slate-950 border border-slate-700 text-sm text-white px-3 py-2 rounded-lg focus:outline-none focus:border-purple-500" />
+                    </div>
+                    {running ? (
+                        <button onClick={stopServer}
+                            className="ml-auto px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white transition-colors">
+                            <Square size={14} fill="currentColor" /> Stop
+                        </button>
+                    ) : (
+                        <button onClick={startRun}
+                            className="ml-auto px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white transition-colors">
+                            <Play size={16} fill="currentColor" /> Run tuning
+                        </button>
+                    )}
+                </div>
+
+                {runStatus && runStatus.phase !== "idle" && (
+                    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm flex flex-wrap items-center gap-x-6 gap-y-1 font-mono">
+                        <span className={`font-bold ${runStatus.phase === "failed" ? "text-red-400" : runStatus.phase === "done" ? "text-emerald-400" : "text-purple-300"}`}>
+                            {runStatus.phase}
+                        </span>
+                        {runStatus.positions > 0 && <span className="text-slate-400">positions {runStatus.positions}</span>}
+                        {runStatus.epoch > 0 && <span className="text-slate-400">epoch {runStatus.epoch}/{runStatus.maxEpochs}</span>}
+                        {runStatus.mse != null && <span className="text-slate-400">mse {Number(runStatus.mse).toFixed(6)}</span>}
+                        {runStatus.appliedCount != null && <span className="text-emerald-400">applied {runStatus.appliedCount} params</span>}
+                        {runStatus.error && <span className="text-red-400">— {runStatus.error}</span>}
+                    </div>
+                )}
+            </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-lg p-5 flex flex-col gap-4">
                 <div className="flex items-center gap-4 text-sm">

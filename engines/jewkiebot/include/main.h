@@ -9,6 +9,7 @@
 #include <atomic>
 #include <vector>
 #include <string>
+#include <functional>
 
 struct PlaySettings {
     int depth;
@@ -53,6 +54,13 @@ public:
     bool loadEvalParams(const std::string& path) { return evaluator.loadParametersFromFile(path); }
     std::string exportEvalParams() const { return evaluator.exportParameters(); }
     int evalParamCount() const { return evaluator.getParameterCount(); }
+
+    // Run Texel tuning against an EPD dataset, writing the optimized raw params to
+    // outputPath and reporting each epoch's MSE. Mutates the evaluator in place.
+    bool runTuning(const std::string& datasetPath, const std::string& outputPath,
+                   int maxEpochs, const std::function<void(int, double)>& onEpoch) {
+        return evaluator.tuneFromDataset(datasetPath, outputPath, maxEpochs, onEpoch);
+    }
 
     void setBookMaxFullmove(int n) { book_max_fullmove = n; }
     int bookMaxFullmove() const { return book_max_fullmove; }
