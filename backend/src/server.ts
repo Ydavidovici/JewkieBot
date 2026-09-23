@@ -18,6 +18,7 @@ import {TasksController} from "./controllers/tasksController.js";
 import {EngineController} from "./controllers/engineController.js";
 import {GameAnalyzerController} from "./controllers/gameAnalyzerController.ts";
 import {LichessController} from "./controllers/lichessController.ts";
+import {ExplorerController} from "./controllers/explorerController.ts";
 
 export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 5, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
     const app = express();
@@ -35,6 +36,7 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
         taskManager, dbClient, engineManager,
         path.resolve(__dirname, "../../engines/jewkiebot/eval_params.txt"),
     );
+    const explorerController = new ExplorerController();
 
     app.use(cors({
         origin: "*",
@@ -96,6 +98,7 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.post("/api/analysis/stop", gameAnalyzerController.stop);
     app.get("/api/analysis/status", gameAnalyzerController.status);
     app.get("/api/analysis/stats", gameAnalyzerController.stats);
+    app.get("/api/analysis/explorer", explorerController.getExplorerData);
 
     app.post("/api/lichess/start", lichessController.start);
     app.post("/api/lichess/stop", lichessController.stop);

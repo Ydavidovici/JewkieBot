@@ -4,6 +4,7 @@ import { Chessboard } from "react-chessboard";
 import { getRecentGames, getGameMoves, getGameEvals } from "../services/api.js";
 import { Play, Square, Activity, ChevronRight, ChevronLeft, Upload } from "lucide-react";
 import { useBot } from "../context/BotContext.jsx";
+import OpeningExplorer from "../components/OpeningExplorer";
 
 export default function AnalysisPage() {
     const { activeUrl, activeDbUrl } = useBot();
@@ -24,13 +25,14 @@ export default function AnalysisPage() {
     const [playerFilter, setPlayerFilter] = useState("");
     const [isFiltering, setIsFiltering] = useState(false);
 
-    // Fetch games based on filter
+    const [explorerData, setExplorerData] = useState(null);
+
     useEffect(() => {
         const fetchGames = async () => {
             try {
                 let res;
+
                 if (isFiltering && playerFilter.trim()) {
-                    // Uses getGamesByPlayer logic from api
                     res = await fetch(`${activeDbUrl}/api/v1/chess/games/player/${encodeURIComponent(playerFilter.trim())}`).then(r => r.json());
                 } else {
                     res = await getRecentGames(15, activeDbUrl);
@@ -45,7 +47,6 @@ export default function AnalysisPage() {
         fetchGames();
     }, [activeDbUrl, isFiltering, playerFilter]);
 
-    // Cleanup SSE
     useEffect(() => {
         return () => stopStreaming();
     }, []);
@@ -82,6 +83,32 @@ export default function AnalysisPage() {
         return customFens[currentPly - 1] || "start";
     };
 
+    // Make the board interactive for analysis!
+    const handleMakeMove = (sourceSquare, targetSquare, promotion = "q") => {
+        try {
+            const fen = getDisplayFen();
+            const tempGame = new Chess(fen === "start" ? undefined : fen);
+            const move = tempGame.move({
+                from: sourceSquare,
+                to: targetSquare,
+                promotion: promotion
+            });
+
+            if (move) {
+                setGame(tempGame);
+                setCustomFens([]); // Clear db game history when we start exploring manually
+                return true;
+            }
+        } catch (e) {
+            console.error("Invalid move");
+        }
+        return false;
+    };
+
+    const handlePieceDrop = (sourceSquare, targetSquare) => {
+        return handleMakeMove(sourceSquare, targetSquare);
+    };
+
     useEffect(() => {
         if (liveAnalysis) {
             startStreaming(getDisplayFen());
@@ -90,6 +117,14 @@ export default function AnalysisPage() {
             setEnginesOutput({ stockfish: "", jewkiebot: "" });
         }
     }, [liveAnalysis, getDisplayFen(), activeUrl]);
+
+    useEffect(() => {
+        const fen = getDisplayFen();
+        fetch(`${activeUrl}/api/analysis/explorer?fen=${encodeURIComponent(fen)}`)
+            .then(res => res.json())
+            .then(data => setExplorerData(data))
+            .catch(err => console.error("Explorer fetch error", err));
+    }, [getDisplayFen(), activeUrl]);
 
     const loadGameData = async (gameId) => {
         try {
@@ -285,6 +320,7 @@ export default function AnalysisPage() {
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
                             <Chessboard 
                                 position={getDisplayFen()} 
+                                onPieceDrop={handlePieceDrop}
                                 animationDuration={200}
                                 customBoardStyle={{
                                     borderRadius: "8px",
@@ -319,6 +355,16 @@ export default function AnalysisPage() {
                     </div>
                     
                     <div className="flex-1 p-4 flex flex-col gap-4 overflow-auto">
+                        <OpeningExplorer 
+                            data={explorerData} 
+                            onMoveClick={(uci) => {
+                                const from = uci.substring(0, 2);
+                                const to = uci.substring(2, 4);
+                                const prom = uci.length > 4 ? uci.substring(4) : "q";
+                                handleMakeMove(from, to, prom);
+                            }} 
+                        />
+
                         {/* JewkieBot Stream */}
                         <div className="bg-slate-950 rounded-xl border border-slate-800 flex flex-col overflow-hidden shadow-inner">
                             <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex justify-between items-center">

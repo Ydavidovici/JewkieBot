@@ -59,6 +59,10 @@ export const dbClient = {
         return transport.post(`/games/${id}/evals/bulk`, evals);
     },
 
+    async getExplorerStats(fen) {
+        return transport.get(`/moves/stats?fen=${encodeURIComponent(fen)}`);
+    },
+
     async getStats() {
         return transport.get("/stats");
     },
