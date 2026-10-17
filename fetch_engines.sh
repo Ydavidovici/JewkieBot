@@ -1,7 +1,7 @@
 #!/bin/bash
 mkdir -p ~/dss/apps/jewkiebot/engines/stockfish
-wget -qO- https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar | tar x --strip-components=1 -C ~/dss/apps/jewkiebot/engines/stockfish/
-mv ~/dss/apps/jewkiebot/engines/stockfish/stockfish-ubuntu-x86-64 ~/dss/apps/jewkiebot/engines/stockfish/stockfish 2>/dev/null || true
+wget -qO- https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz | tar xz --strip-components=1 -C ~/dss/apps/jewkiebot/engines/stockfish/
+mv ~/dss/apps/jewkiebot/engines/stockfish/stockfish-linux-x86-64-universal ~/dss/apps/jewkiebot/engines/stockfish/stockfish 2>/dev/null || true
 chmod +x ~/dss/apps/jewkiebot/engines/stockfish/stockfish 2>/dev/null || true
 
 mkdir -p ~/dss/apps/jewkiebot/engines/berserk

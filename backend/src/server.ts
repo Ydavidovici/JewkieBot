@@ -158,8 +158,10 @@ async function downloadStockfish(stockfishPath: string): Promise<boolean> {
     const destDir = path.dirname(stockfishPath);
     fs.mkdirSync(destDir, {recursive: true});
 
-    const url = "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64.tar";
-    const tarPath = path.join(destDir, "stockfish.tar");
+    // Pinned: SF 19 renamed the Linux asset (was stockfish-ubuntu-x86-64.tar), which made
+    // the old "latest" URL 404. Bump the tag deliberately when upgrading.
+    const url = "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz";
+    const tarPath = path.join(destDir, "stockfish.tar.gz");
 
     console.log(`[Server] Downloading Stockfish in the background from ${url} ...`);
     const res = await fetch(url);
@@ -167,7 +169,7 @@ async function downloadStockfish(stockfishPath: string): Promise<boolean> {
 
     await Bun.write(tarPath, await res.arrayBuffer());
 
-    const cmd = `tar xf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-ubuntu-x86-64 ${stockfishPath} 2>/dev/null || true && chmod +x ${stockfishPath} 2>/dev/null || true`;
+    const cmd = `tar xzf ${tarPath} --strip-components=1 -C ${destDir} && mv ${destDir}/stockfish-linux-x86-64-universal ${stockfishPath} 2>/dev/null || true && chmod +x ${stockfishPath} 2>/dev/null || true`;
     spawnSync("bash", ["-c", cmd], {stdio: "inherit"});
     fs.unlinkSync(tarPath);
 
