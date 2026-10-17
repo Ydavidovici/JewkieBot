@@ -4,6 +4,7 @@ import { Random64 } from "./polyglotConstants.ts";
 
 export class PolyglotReader {
     private bookPath: string;
+    private warnedMissing = false;
 
     constructor(bookPath: string) {
         this.bookPath = bookPath;
@@ -156,7 +157,15 @@ export class PolyglotReader {
             moves.sort((a, b) => b.weight - a.weight);
             
             return moves;
-        } catch (err) {
+        } catch (err: any) {
+            // A missing book is normal in local dev; say so once instead of on every position.
+            if (err?.code === "ENOENT") {
+                if (!this.warnedMissing) {
+                    console.warn(`[Polyglot] No opening book at ${this.bookPath} — book moves disabled.`);
+                    this.warnedMissing = true;
+                }
+                return [];
+            }
             console.error("Polyglot Read Error:", err);
             return [];
         }

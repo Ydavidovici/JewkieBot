@@ -186,6 +186,8 @@ export class EngineController {
                 fen = "startpos";
             }
             const depth = parseInt(req.query.depth) || 20;
+            // Stockfish candidate lines to report (JewkieBot has no MultiPV and always sends one).
+            const multiPv = Math.min(5, Math.max(1, parseInt(req.query.multipv) || 1));
 
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache");
@@ -207,8 +209,12 @@ export class EngineController {
 
             req.on("close", cleanup);
 
+            // Only forward lines that carry a PV. Stockfish also emits "info depth N currmove ..."
+            // progress lines and aspiration-window bound lines; those blanked out the UI's eval.
             const forwardLine = (engineName) => (line) => {
-                if (line.startsWith("info depth") || line.startsWith("bestmove")) {
+                const isPvLine = line.startsWith("info depth") && line.includes(" pv ")
+                    && !line.includes("lowerbound") && !line.includes("upperbound");
+                if (isPvLine || line.startsWith("bestmove")) {
                     res.write(`data: ${JSON.stringify({engine: engineName, line})}\n\n`);
                 }
             };
@@ -224,6 +230,7 @@ export class EngineController {
             if (stockfish) {
                 await stockfish.start();
                 stockfish.on("line", forwardLine("stockfish"));
+                await stockfish._sendCommand({ command: `setoption name MultiPV value ${multiPv}` });
                 await stockfish.position(fen);
                 await stockfish._sendCommand({ command: `go infinite` });
             }
