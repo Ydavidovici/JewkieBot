@@ -165,7 +165,8 @@ export class Notifier extends EventEmitter {
 // Drop-in no-op notifier so callers don't have to null-check.
 export const nullNotifier = new Notifier({transports: []});
 
-export const CONSOLE_WRAP_SKIP_PREFIXES = ["[ApiTransport]", "[Notifier]"];
+// [HTTP] is the per-request access log: docker logs only, never Discord.
+export const CONSOLE_WRAP_SKIP_PREFIXES = ["[ApiTransport]", "[Notifier]", "[HTTP]"];
 
 export function wrapConsoleForNotifier(notifier) {
     const origConsole = {

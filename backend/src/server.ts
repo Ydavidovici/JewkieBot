@@ -20,8 +20,25 @@ import {GameAnalyzerController} from "./controllers/gameAnalyzerController.ts";
 import {LichessController} from "./controllers/lichessController.ts";
 import {ExplorerController} from "./controllers/explorerController.ts";
 
-export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 5, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null}: any = {}) {
+export function createApp({engineManager, lichessEngineFactory, mainEnginePath, maxConcurrentGames = 5, getToken = () => process.env.lichess_api_token, BotClass = LichessBot, notifier = nullNotifier, analyzer = null, accessLog = null}: any = {}) {
     const app = express();
+
+    // The host nginx gates only the exact lowercase /api/ prefix, so routes
+    // must not match /API/... the way Express does by default.
+    app.set("case sensitive routing", true);
+
+    // One line per request. X-Real-IP is set by the host nginx, so a request
+    // without it reached the container some other way.
+    if (accessLog) {
+        app.use((req: any, res: any, next: any) => {
+            const start = Date.now();
+            res.on("finish", () => {
+                const ip = req.headers["x-real-ip"] ?? `direct:${req.socket.remoteAddress}`;
+                accessLog(`[HTTP] ${ip} ${req.method} ${req.originalUrl} → ${res.statusCode} ${Date.now() - start}ms "${req.headers["user-agent"] ?? "-"}"`);
+            });
+            next();
+        });
+    }
 
     const engineController = new EngineController(engineManager, notifier, mainEnginePath, analyzer, taskManager);
     const gameAnalyzerController = new GameAnalyzerController(analyzer, taskManager);
@@ -126,12 +143,17 @@ export function createApp({engineManager, lichessEngineFactory, mainEnginePath, 
     app.get("/api/tasks", tasksController.getAllTasks);
     app.get("/api/tasks/:id", tasksController.getTask);
 
+    // Any casing of /api that no route matched, for every method: a JSON 404
+    // (which the error logger above reports) instead of the SPA or Express's
+    // HTML 404.
+    app.use((req: any, res: any, next: any) => {
+        if (!/^\/api(\/|$)/i.test(req.path)) return next();
+        res.status(404).json({error: "Not found"});
+    });
+
     const distPath = path.resolve(import.meta.dir, "../../frontend/dist");
     app.use(express.static(distPath));
     app.get(/.*/, (req, res) => {
-        if (req.path.startsWith("/api/")) {
-            return res.status(404).json({error: "Not found"});
-        }
         res.sendFile(path.join(distPath, "index.html"));
     });
 
@@ -284,6 +306,7 @@ if (import.meta.main) {
         maxConcurrentGames: LICHESS_MAX_GAMES,
         notifier,
         analyzer,
+        accessLog: (line: string) => console.log(line),
     });
 
     const PORT = process.env.PORT || 8000;
