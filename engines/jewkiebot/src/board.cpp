@@ -481,16 +481,23 @@ void Board::generatePseudoMoves(MoveList& out) const {
         emitMovesFromTargets(king_square_index, ATTACK_TABLES.king_attacks[king_square_index] & ~own_occupancy);
     }
 
-    if (us_color == Color::WHITE) {
-        if ((castling_rights & 0b0001) && !(all_occupancy & ((1ULL << 5) | (1ULL << 6))))
-            out.push_back(Move(4, 6, MoveType::CASTLE_KINGSIDE));
-        if ((castling_rights & 0b0010) && !(all_occupancy & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))))
-            out.push_back(Move(4, 2, MoveType::CASTLE_QUEENSIDE));
-    } else {
-        if ((castling_rights & 0b0100) && !(all_occupancy & ((1ULL << 61) | (1ULL << 62))))
-            out.push_back(Move(60, 62, MoveType::CASTLE_KINGSIDE));
-        if ((castling_rights & 0b1000) && !(all_occupancy & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))))
-            out.push_back(Move(60, 58, MoveType::CASTLE_QUEENSIDE));
+    // Castling: the king may not castle out of check or through an attacked
+    // square. The landing square is checked by makeMove() like any other move.
+    // On the queen side b1/b8 must be empty but may be attacked.
+    const Color opponent_color = (us_color == Color::WHITE ? Color::BLACK : Color::WHITE);
+    const int king_from = (us_color == Color::WHITE ? 4 : 60);
+    const uint8_t short_right = (us_color == Color::WHITE ? 0b0001 : 0b0100);
+    const uint8_t long_right = (us_color == Color::WHITE ? 0b0010 : 0b1000);
+
+    if ((castling_rights & (short_right | long_right)) && !isSquareAttacked(king_from, opponent_color)) {
+        if ((castling_rights & short_right) &&
+            !(all_occupancy & ((1ULL << (king_from + 1)) | (1ULL << (king_from + 2)))) &&
+            !isSquareAttacked(king_from + 1, opponent_color))
+            out.push_back(Move(king_from, king_from + 2, MoveType::CASTLE_KINGSIDE));
+        if ((castling_rights & long_right) &&
+            !(all_occupancy & ((1ULL << (king_from - 1)) | (1ULL << (king_from - 2)) | (1ULL << (king_from - 3)))) &&
+            !isSquareAttacked(king_from - 1, opponent_color))
+            out.push_back(Move(king_from, king_from - 2, MoveType::CASTLE_QUEENSIDE));
     }
 }
 
@@ -561,15 +568,8 @@ void Board::generateLegalMoves(MoveList& out) const {
         if (opponent_king_bitboard & (1ULL << move.end))
             continue;
 
-        if (move.type == MoveType::CASTLE_KINGSIDE || move.type == MoveType::CASTLE_QUEENSIDE) {
-            int king_start_square = move.start;
-            int king_step = (move.type == MoveType::CASTLE_KINGSIDE ? +1 : -1);
-            int king_middle_square = king_start_square + king_step;
-
-            if (isSquareAttacked(king_start_square, opponent_color)) continue;
-            if (isSquareAttacked(king_middle_square, opponent_color)) continue;
-        }
-
+        // Castling through or out of check is already excluded by
+        // generatePseudoMoves().
         if (mutable_board->makeMove(move)) {
             mutable_board->unmakeMove();
             out.push_back(move);

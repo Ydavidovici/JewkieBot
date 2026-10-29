@@ -244,6 +244,45 @@ static void test_castling_rules() {
     std::cout << "  ok castling rules\n\n";
 }
 
+// The search generates pseudo-legal moves and leaves legality to makeMove(),
+// which only checks the king's final square. So the pseudo generator itself
+// must not emit castling out of check or through an attacked square (doc 02).
+// Every FEN's expected castles verified with Stockfish `go perft 1`.
+static void test_pseudo_castling_respects_attacks() {
+    std::cout << "--- test_pseudo_castling_respects_attacks ---\n";
+    auto pseudo_uci = [](const string& fen) {
+        Board b; b.loadFEN(fen);
+        MoveList moves;
+        b.generatePseudoMoves(moves);
+        return to_uci(moves);
+    };
+    struct Case { const char* label; const char* fen; const char* castle; bool allowed; };
+    const Case cases[] = {
+        {"white in check",                 "k3r3/8/8/8/8/8/8/4K2R w K - 0 1", "e1g1", false},
+        {"white short through f1",         "k7/5r2/8/8/8/8/8/4K2R w K - 0 1", "e1g1", false},
+        {"white short, control",           "k7/8/8/8/8/8/8/4K2R w K - 0 1",   "e1g1", true},
+        {"white long through d1",          "3r3k/8/8/8/8/8/8/R3K3 w Q - 0 1", "e1c1", false},
+        {"white long, only b1 attacked",   "1r5k/8/8/8/8/8/8/R3K3 w Q - 0 1", "e1c1", true},
+        {"black short through f8",         "4k2r/8/8/8/8/8/8/K4R2 b k - 0 1", "e8g8", false},
+        {"black long through d8",          "r3k3/8/8/8/8/8/8/3R3K b q - 0 1", "e8c8", false},
+        {"black both sides, control",      "r3k2r/8/8/8/8/8/8/3K4 b kq - 0 1", "e8g8", true},
+        {"black both sides, control",      "r3k2r/8/8/8/8/8/8/3K4 b kq - 0 1", "e8c8", true},
+    };
+    for (const auto& c : cases) {
+        auto v = pseudo_uci(c.fen);
+        bool has = contains(v, c.castle);
+        std::cout << "  " << c.label << ": " << c.castle << (has ? " generated" : " not generated") << "\n";
+        assert(has == c.allowed);
+    }
+    {
+        // Landing on an attacked square is left to makeMove(), as for any move.
+        Board b; b.loadFEN("k5r1/8/8/8/8/8/8/4K2R w K - 0 1");
+        assert(!contains(gen_uci(b), "e1g1"));
+        assert(!b.makeMove(Move(4, 6, MoveType::CASTLE_KINGSIDE)));
+    }
+    std::cout << "  ok pseudo castling\n\n";
+}
+
 static void test_en_passant_rules() {
     std::cout << "--- test_en_passant_rules ---\n";
     Board b; b.loadFEN("k7/3p4/8/4P3/8/8/8/4K3 b - - 0 1");
@@ -352,6 +391,7 @@ int main() {
     test_king_safety_and_no_king_captures();
 
     test_castling_rules();
+    test_pseudo_castling_respects_attacks();
     test_en_passant_rules();
     test_pins_and_illegal_due_to_self_check();
 

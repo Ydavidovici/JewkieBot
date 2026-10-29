@@ -63,6 +63,10 @@ add_executable(test_perft tests/perft_test.cpp)
 foreach (test_exe IN ITEMS test_board_move test_eval test_search test_transposition_table test_book test_time_manager test_perft)
     target_link_libraries(${test_exe} PRIVATE core_engine)
     target_link_options(${test_exe} PRIVATE -static -static-libgcc -static-libstdc++)
+    # The tests check with assert(); Release/RelWithDebInfo define NDEBUG,
+    # which would turn every check into a no-op. Keep them on in the tests
+    # only; the engine code they link stays an optimised Release build.
+    target_compile_options(${test_exe} PRIVATE -UNDEBUG)
 endforeach ()
 
 add_test(NAME board_move_tests COMMAND test_board_move)

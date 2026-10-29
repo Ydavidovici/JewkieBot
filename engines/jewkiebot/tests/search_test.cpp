@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <sstream>
 
 #include "search.h"
 #include "evaluator.h"
@@ -213,6 +214,24 @@ static void test_coverage_mate_in_1_positions() {
 	std::cout << "PASS\n\n";
 }
 
+// Doc 02: the search used to let White escape Ra1+ by castling out of check,
+// so it never saw the mate. White still has the castling right here. The old
+// code played a8a1 too, as a merely good move, so check the score: the
+// search's own info lines must report mate in 1.
+static void test_coverage_mate_in_1_castling_right() {
+	std::cout << "--- test_coverage_mate_in_1_castling_right ---\n";
+
+	std::ostringstream info;
+	std::streambuf* saved = std::cout.rdbuf(info.rdbuf());
+	Move move = run_search("r6k/8/8/8/8/8/3PPP1P/4K2R b K - 0 1", std::max(2, SEARCH_DEPTH));
+	std::cout.rdbuf(saved);
+	std::cout << info.str() << "  move: " << move.toString() << "\n";
+
+	assert(move.toString() == "a8a1" && "Ra1# — castling out of check is illegal");
+	assert(info.str().find("score mate 1 ") != std::string::npos && "search must see Ra1 as mate");
+	std::cout << "PASS\n\n";
+}
+
 static void test_coverage_mate_in_2_rook_cut() {
 	std::cout << "--- test_coverage_mate_in_2_rook_cut ---\n";
 
@@ -352,6 +371,7 @@ int main() {
 
 	std::cout << "========== SECTION 4: Correctness Coverage ==========\n\n";
 	test_coverage_mate_in_1_positions();
+	test_coverage_mate_in_1_castling_right();
 	test_coverage_mate_in_2_rook_cut();
 	test_coverage_mate_in_3_back_rank();
 	test_coverage_forced_check_evasion();

@@ -32,14 +32,14 @@ speed-up must keep it; anything that changes it records the new number.
 
 | Metric | Value |
 | --- | --- |
-| **Bench** | **17,250,320 nodes** (~15 s, ~1.39M nps on the dev laptop) |
+| **Bench** | **17,250,320 nodes** (~15 s, ~1.39M nps on the dev laptop). After doc 02: **16,371,041** |
 | Eval throughput | ~3.0M evals/s (`bench nosearch`) |
 | Move ordering | 83.8% first-move cutoffs |
 | Quiescence share | 67.3% of nodes |
 | TT hit rate | 21.4% of probes |
-| Perft (`test_perft`) | 8/15 pass; the 7 failures are the castling bug (doc 02). Kiwipete d4: 4,111,156 vs correct 4,085,603 (+25,553). Every root move is off by 58–3,572; the worst four are the knight moves to c6/d7/f7/g6, which attack the squares Black's king castles through |
+| Perft (`test_perft`) | 15/15 since doc 02. Before it: 8/15 pass; the 7 failures are the castling bug (doc 02). Kiwipete d4: 4,111,156 vs correct 4,085,603 (+25,553). Every root move is off by 58–3,572; the worst four are the knight moves to c6/d7/f7/g6, which attack the squares Black's king castles through |
 | Perft speed | ~14M nodes/s (start position d6: 119,060,324 nodes, correct, in 8.6 s). Baseline for doc 08 |
-| Tactics (`scripts/tactics.ts`) | 194/201 at 500 ms, 189–190/201 at 100 ms (±1 run to run: time-limited). The 6 Lichess misses are pins, a deflection, quiet and defensive moves; the 1 regression is the castling bug (doc 02) |
+| Tactics (`scripts/tactics.ts`) | Lichess file: 190–196/200 at 500 ms over 5 runs (same code; time-limited search varies run to run), 189–190/200 at 100 ms. Misses are mostly pins, deflections, quiet and defensive moves. Regression file: 1/1 since doc 02 |
 
 Run with `scripts/run.sh`, then `bench` (or `printf 'bench\nquit\n' | build/jewkiebot.exe`).
 
@@ -69,7 +69,7 @@ measurements**. Only an SPRT match (doc 01) turns them into facts.
 | # | Doc | Work | Effort | Rough Elo | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [Testing harness](#testing-harness) | Perft, bench, tactics, SPRT | Small–medium | (enabler) | **Done** 2026-10-29 |
-| 2 | [02-castling-legality-bug.md](02-castling-legality-bug.md) | Search castles out of / through check | ~10 lines | +20–60 | **Bug confirmed**, not fixed |
+| 2 | [02-castling-legality-bug.md](02-castling-legality-bug.md) | Search castles out of / through check | ~10 lines | +20–60 (measured: **+9 ± 6**) | **Done** 2026-10-29, SPRT passed |
 | 3 | [03-see-and-quiescence.md](03-see-and-quiescence.md) | Static exchange evaluation; prune losing captures | Small–medium | +50–100 | Not started |
 | 4 | [04-eval-tapering-and-tuning.md](04-eval-tapering-and-tuning.md) | MG/EG tapered eval, real Texel tuning | Medium | +100–200 | Not started |
 | 5 | [05-search-heuristics.md](05-search-heuristics.md) | History, countermoves, TT aging, IIR, … | Medium (many small) | +50–100 total | Not started |
@@ -110,7 +110,7 @@ docs means this section). Four checks, cheapest first. Run them all from
 | Build + unit tests | `scripts/build.sh`, `scripts/test.sh [regex]` | Compiles; ctest `-L tests` (`perft_test` included) |
 | Perft | `scripts/run.sh`, then `position startpos` + `perft 5` | Move generation is correct: node counts must match the known values (`tests/perft_test.cpp`). Prints a count per root move ("divide") to find which move is wrong |
 | Bench | `scripts/run.sh`, then `bench` | The `Bench: <nodes>` fingerprint. A refactor or speed-up must keep it; a change that alters it says so in its commit message |
-| Tactics | `bun scripts/tactics.ts [--movetime 500]` | "Did I break tactics": 200 Stockfish-verified Lichess puzzles + bug regressions. A drop of 2–3 or more is a red flag; ±1 is noise |
+| Tactics | `bun scripts/tactics.ts [--movetime 500]` | "Did I break tactics": 200 Stockfish-verified Lichess puzzles + bug regressions. Same code scores 190–196/200 at 500 ms, so only a drop below ~188 is a red flag. Regressions must stay solved |
 | SPRT | `scripts/sprt.sh <base> <new> [stc\|ltc] [gainer\|simplify\|sanity]` | Whether the change is actually stronger. Appends to [results.md](results.md) |
 
 **SPRT.** Refs are git refs or `working` (the working tree as is). Both sides

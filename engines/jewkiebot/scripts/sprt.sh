@@ -27,6 +27,8 @@
 #
 # Needs tools/fastchess/... and tools/UHO_4060_v1.epd (see "Testing harness" in docs/engine-improvements/README.md).
 set -euo pipefail
+# Without this, a failure inside $(...) (e.g. a build) doesn't stop the script.
+shopt -s inherit_errexit
 
 ENGINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Ask git for both: on Windows it reports C:/... paths while Git Bash uses
@@ -94,6 +96,9 @@ build() {
         sha="$(git -C "$src" rev-parse --short HEAD)"
     fi
     local out="$WORK/build-$label"
+    # Always a clean build: a cache left by an earlier run points at that
+    # run's source tree, and would silently build it instead of this one.
+    rm -rf "$out"
     cmake -S "$src/$ENGINE_SUBDIR" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
     cmake --build "$out" --target jewkiebot >/dev/null
     local exe="$out/jewkiebot"; [[ -f "$exe.exe" ]] && exe="$exe.exe"

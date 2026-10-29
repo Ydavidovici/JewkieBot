@@ -1,6 +1,6 @@
 # 02 — Castling legality bug in search
 
-**Status:** bug confirmed 2026-10-28, not fixed
+**Status:** fixed 2026-10-29 (Option A). SPRT passed: **+9.0 ± 6.0 Elo** over 8,050 games. See "Result" at the end
 **Effort:** ~10–20 lines + tests
 **Elo:** roughly +20–60 (it's a correctness bug; the exact gain depends on how often it bites)
 
@@ -66,6 +66,15 @@ White castles short, rook h1→f1 blocks), so even the landing-square check
 passes.
 
 ## Reproduction
+
+> **Correction (2026-10-29):** the position below is wrong. White's h1 rook
+> sees up the open h-file, so Black starts **in check** and `Ra1` isn't even
+> legal (Stockfish: only `Kg8`/`Kg7`). The engine's `h8g7` was correct there.
+> The working reproduction adds a pawn on h2 to close the file:
+> `r6k/8/8/8/8/8/3PPP1P/4K2R b K - 0 1` — Stockfish: `score mate 1 pv a8a1`.
+> Before the fix the engine also played `a8a1` there, but only as a good move
+> (`score cp -425 pv a8a1 e1g1 …`, castling out of check); after it,
+> `score mate 1` from depth 1. The bug itself was real, as perft showed.
 
 Position (Black to move): `r6k/8/8/8/8/8/3PPP2/4K2R b K - 0 1`
 
@@ -196,3 +205,42 @@ generated, scored, sorted, and only then rejected. Option A is better.
   isn't a real repetition. Stop the scan at a null-move entry.
 - `Board::generateLegalMoves()` has a branch for "no king on the board"
   (returns all pseudo moves). Fine for test positions; leave it.
+
+## Result (2026-10-29)
+
+Option A in `Board::generatePseudoMoves()`. The castling check in
+`generateLegalMoves()` was removed, so there's one source of truth.
+
+| Check | Before | After |
+| --- | --- | --- |
+| Perft (`test_perft`) | 8/15 (Kiwipete d4 +25,553) | **15/15** |
+| Mate-in-1 with a castling right (corrected FEN above) | `a8a1` as `cp -425`, PV castles out of check | `score mate 1` at depth 1 |
+| Bench | 17,250,320 | **16,371,041** (fewer, correct moves to search) |
+| Tactics, Lichess file | 190–196/200 | 190–196/200 (no measurable change; puzzles rarely hinge on castling) |
+| Tactics, regressions | 0/1 | 1/1 |
+| SPRT vs. pre-fix `dev` (8+0.08, gainer 0/5) | | **H1 accepted: +9.0 ± 6.0 Elo**, 8,050 games (W 2924, L 2715, D 2411), LLR 2.97 |
+
+Tests added. Each one was checked to **fail on the old `board.cpp`**:
+- `test_pseudo_castling_respects_attacks` (board_move_tests): 9 Stockfish-verified
+  positions, both colors and both sides, plus a landing-square case.
+- `test_coverage_mate_in_1_castling_right` (search_test): asserts the move
+  *and* that the search reports `score mate 1`, because the old code found the move too.
+
+Found on the way: **no `assert()` in the test suites ever ran.** Release
+and RelWithDebInfo define `NDEBUG`, so every check was a no-op. CMake now builds
+the tests with `-UNDEBUG`, and all existing assertions pass. One test that could
+never fail before, `time_manager_test`, is sleep-based with narrow windows
+(e.g. "sleep 140 ms, expect between 100 and 200"). It failed once in about 6 runs on
+Windows timer jitter and needs looser timing or a fake clock (follow-up).
+
+The SPRT took about 7.5 hours. The early lead (+29 after 676 games) was
+partly luck, and the estimate settled at about +9. That's below the doc's
++20–60 guess: Lichess-style games rarely reach the positions where an
+illegal castle in the search tree changes the move played. Watching the
+old base engine, fastchess warned 550+ times about illegal castles in its
+PV output; the fixed engine had none.
+
+The match had 60 losses on time (0.7%), all small overruns (1–95 ms), split
+between the two sides. That doesn't bias the result, but an engine with a
+100 ms move-overhead margin shouldn't overrun at all. It's worth a look
+alongside the flaky `time_manager_test`, since the bot plays bullet.
