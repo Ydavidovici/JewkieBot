@@ -3,6 +3,21 @@ import fs from "node:fs";
 
 // TODO: migrate to ts
 
+// Move inserts go to db-service in chunks of this size, at most this many at
+// once. db-service has 5 php-fpm workers and nginx gives a request 300 s:
+// 5 parallel chunks of 5,000 took every worker and timed out (504) on
+// 2026-10-29. Keep chunks small and leave workers free for other callers.
+export const MOVE_CHUNK_SIZE = 1000;
+export const MOVE_CHUNK_CONCURRENCY = 2;
+
+// PGN dates look like "2017.09.09". chess.js reports a missing Date header as
+// the "????.??.??" placeholder, which isn't a date: fall back to now rather
+// than throwing and dropping the game.
+function pgnDateToIso(pgnDate) {
+    const parsed = pgnDate ? new Date(pgnDate.replace(/\./g, "-")) : null;
+    return parsed && !isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+}
+
 export class PgnManager {
     constructor(dbClient) {
         this.dbClient = dbClient;
@@ -59,7 +74,7 @@ export class PgnManager {
                     result: headers.Result || "*",
                     termination: headers.Termination || null,
                     timeControl: headers.TimeControl || null,
-                    started_at: headers.Date ? new Date(headers.Date.replace(/\./g, "-")).toISOString() : new Date().toISOString(),
+                    started_at: pgnDateToIso(headers.Date),
                     openingEco: headers.ECO || null,
                     openingName: headers.Opening || null,
                 });
@@ -110,18 +125,15 @@ export class PgnManager {
             success++;
         }
 
-        // We can optimize the moves insert as well if dbClient supports it
         if (allMovesPayload.length > 0) {
             console.log(`Sending bulk create request for ${allMovesPayload.length} total moves in chunks...`);
-            const chunkSize = 5000;
             const chunks = [];
-            for (let i = 0; i < allMovesPayload.length; i += chunkSize) {
-                chunks.push(allMovesPayload.slice(i, i + chunkSize));
+            for (let i = 0; i < allMovesPayload.length; i += MOVE_CHUNK_SIZE) {
+                chunks.push(allMovesPayload.slice(i, i + MOVE_CHUNK_SIZE));
             }
 
-            const CONCURRENCY = 5;
-            for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-                const batch = chunks.slice(i, i + CONCURRENCY);
+            for (let i = 0; i < chunks.length; i += MOVE_CHUNK_CONCURRENCY) {
+                const batch = chunks.slice(i, i + MOVE_CHUNK_CONCURRENCY);
                 await Promise.all(batch.map(chunk => this.dbClient.insertMovesBulk(chunk)));
             }
         }
