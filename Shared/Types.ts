@@ -100,6 +100,11 @@ export interface LichessBotOptions {
     maxBotGamesUntil?: number;
     apiTransport?: ApiTransport;
     declineCooldownMs?: number;
+    // Abandoned games (see LichessBot.playGame): how long an opponent may stay
+    // silent on their turn before the bot aborts / claims victory.
+    firstMoveTimeoutMs?: number;      // before the 2nd ply (abort window)
+    opponentSilenceGraceMs?: number;  // later: on top of the opponent's clock
+    abandonCheckIntervalMs?: number;
 }
 
 export interface LichessAutoplayOptions {
@@ -127,4 +132,5 @@ export interface LichessAutoplayState {
     opponentType: "bots" | "humans" | "both";
     timer: ReturnType<typeof setTimeout> | null;
     huntInFlight: boolean;
+    lastWaitLogAt?: number;
 }

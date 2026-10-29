@@ -1,6 +1,6 @@
 import {mock, describe, it, expect, beforeEach, afterEach} from "bun:test";
 import {EventEmitter} from "node:events";
-import {nullNotifier} from "../../src/notifier.js";
+import {nullNotifier, Notifier} from "../../src/notifier.js";
 
 // Bun's mock() returns a Mock that lacks `preconnect`, so it isn't directly
 // assignable to `typeof fetch`. This wraps the cast in one place; tests reach
@@ -3277,5 +3277,140 @@ describe("LichessMaxBotGamesReached parsing", () => {
         const err = await LichessRateLimited.fromResponse(response);
         expect(err.name).toBe("LichessRateLimited");
         expect(err.retryAfterSec).toBe(50);
+    });
+});
+
+// On 2026-10-29 an opponent bot never answered 1.e4: Lichess kept the game
+// "playing" for 9 hours and it held autoplay's only slot, so the bot sat idle
+// with nothing in the logs. These pin the abandoned-game handling.
+describe("Abandoned games", () => {
+    const fastAbandon = {firstMoveTimeoutMs: 60, opponentSilenceGraceMs: 60, abandonCheckIntervalMs: 20};
+
+    // Game stream that stays open (like a real stuck game) after sending `items`.
+    function openGame(gameId, items) {
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/account")) return {ok: true, json: async () => ({id: "bot"})};
+            if (url.includes("/stream/event")) {
+                return {ok: true, body: createMockStream([{type: "gameStart", game: {id: gameId}}])};
+            }
+            if (url.includes(`/bot/game/stream/${gameId}`)) {
+                const encoder = new TextEncoder();
+                return {ok: true, body: new ReadableStream({start(c) {
+                    for (const item of items) c.enqueue(encoder.encode(JSON.stringify(item) + "\n"));
+                }})};
+            }
+            if (url.includes("/abort") || url.includes("/claim-victory") || url.includes("/move/")) return {ok: true};
+            return {ok: false};
+        });
+    }
+
+    const postsTo = (suffix) => (global.fetch as any).mock.calls.some(([url]) => url.endsWith(suffix));
+
+    it("aborts when the opponent never makes their first move", async () => {
+        bot = makeBot(fastAbandon);
+        openGame("nofirst1", [makeGameFull("nofirst1", "bot", {white: "bot", black: "opp", moves: "e2e4"})]);
+        await bot.start();
+        await waitFor(() => expect(postsTo("/bot/game/nofirst1/abort")).toBe(true));
+        expect(postsTo("/bot/game/nofirst1/claim-victory")).toBe(false);
+    });
+
+    it("claims victory when the opponent goes silent past their clock", async () => {
+        bot = makeBot(fastAbandon);
+        openGame("silent01", [makeGameFull("silent01", "bot", {white: "bot", black: "opp", moves: "e2e4 e7e5 g1f3", btime: 50})]);
+        await bot.start();
+        await waitFor(() => expect(postsTo("/bot/game/silent01/claim-victory")).toBe(true));
+    });
+
+    it("leaves the game alone while the opponent is still within their clock", async () => {
+        bot = makeBot({...fastAbandon, opponentSilenceGraceMs: 60_000});
+        openGame("thinking", [makeGameFull("thinking", "bot", {white: "bot", black: "opp", moves: "e2e4 e7e5 g1f3", btime: 60_000})]);
+        await bot.start();
+        await new Promise(r => setTimeout(r, 200));
+        expect(postsTo("/bot/game/thinking/claim-victory")).toBe(false);
+        expect(postsTo("/bot/game/thinking/abort")).toBe(false);
+    });
+
+    it("claims victory after Lichess reports the opponent gone", async () => {
+        bot = makeBot({...fastAbandon, opponentSilenceGraceMs: 60_000});
+        openGame("gone0001", [
+            makeGameFull("gone0001", "bot", {white: "bot", black: "opp", moves: "e2e4 e7e5 g1f3", btime: 60_000}),
+            {type: "opponentGone", gone: true, claimWinInSeconds: 0},
+        ]);
+        await bot.start();
+        await waitFor(() => expect(postsTo("/bot/game/gone0001/claim-victory")).toBe(true), 2500);
+    });
+
+    it("cancels the claim when the opponent comes back", async () => {
+        bot = makeBot({...fastAbandon, opponentSilenceGraceMs: 60_000});
+        openGame("back0001", [
+            makeGameFull("back0001", "bot", {white: "bot", black: "opp", moves: "e2e4 e7e5 g1f3", btime: 60_000}),
+            {type: "opponentGone", gone: true, claimWinInSeconds: 0},
+            {type: "opponentGone", gone: false},
+        ]);
+        await bot.start();
+        await new Promise(r => setTimeout(r, 1400));
+        expect(postsTo("/bot/game/back0001/claim-victory")).toBe(false);
+    });
+
+    it("autoplay says which games it is waiting on, at most every 10 minutes", () => {
+        const events = [];
+        bot = makeBot({notifier: new Notifier({transports: [{send: (e) => events.push(e)}]})});
+        bot.activeGames.add("stuck001");
+        bot.startAutoplay({target: 1});
+        bot._tickAutoplay();
+        bot._tickAutoplay();
+
+        const waiting = events.filter(e => String(e.subject).startsWith("[Autoplay] At target"));
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0].subject).toContain("stuck001");
+    });
+});
+
+// The bot must leave a game the moment anyone else ends it (opponent abort,
+// Lichess's own no-start abort, or a game already over when we reconnect),
+// without ever having to abort or claim itself. Streams stay open here, like
+// real ones, so cleanup can only come from the bot reacting to the status.
+describe("Games ended by the opponent or Lichess", () => {
+    function openGameWith(gameId, items) {
+        global.fetch = mockFetch(async(url) => {
+            if (url.includes("/account")) return {ok: true, json: async () => ({id: "bot"})};
+            if (url.includes("/stream/event")) {
+                return {ok: true, body: createMockStream([{type: "gameStart", game: {id: gameId}}])};
+            }
+            if (url.includes(`/bot/game/stream/${gameId}`)) {
+                const encoder = new TextEncoder();
+                return {ok: true, body: new ReadableStream({start(c) {
+                    for (const item of items) c.enqueue(encoder.encode(JSON.stringify(item) + "\n"));
+                }})};
+            }
+            return {ok: true};
+        });
+    }
+
+    const ended = (status) => ({type: "gameState", moves: "e2e4", wtime: 180000, btime: 180000, winc: 0, binc: 0, status, winner: null});
+    const ourAbortsOrClaims = () => (global.fetch as any).mock.calls.filter(([url]) => /\/(abort|claim-victory)$/.test(url));
+
+    for (const [who, status] of [["the opponent aborts", "aborted"], ["Lichess aborts (no first move)", "noStart"]]) {
+        it(`leaves the game and frees the slot when ${who}`, async () => {
+            const events = [];
+            bot = makeBot({notifier: new Notifier({transports: [{send: (e) => events.push(e)}]})});
+            openGameWith("ended001", [makeGameFull("ended001", "bot", {white: "bot", black: "opp", moves: "e2e4"}), ended(status)]);
+            await bot.start();
+
+            await waitFor(() => expect(bot.activeGames.has("ended001")).toBe(false));
+            const over = events.find(e => String(e.subject).startsWith("[Game] Game over: ended001"));
+            expect(over?.details).toMatchObject({status, result: null});
+            expect(ourAbortsOrClaims()).toHaveLength(0);
+        });
+    }
+
+    it("leaves immediately when reconnecting to a game that is already over", async () => {
+        bot = makeBot();
+        openGameWith("ended002", [makeGameFull("ended002", "bot", {white: "opp", black: "bot", moves: "", status: "aborted"})]);
+        await bot.start();
+
+        await waitFor(() => expect(bot.activeGames.has("ended002")).toBe(false));
+        expect(engine.go).not.toHaveBeenCalled();
+        expect(ourAbortsOrClaims()).toHaveLength(0);
     });
 });

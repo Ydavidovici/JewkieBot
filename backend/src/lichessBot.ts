@@ -73,6 +73,9 @@ export function mapResult(status, winner) {
     return null;
 }
 
+// How often autoplay may log that it's waiting on its active games.
+const AUTOPLAY_WAIT_LOG_MS = 10 * 60 * 1000;
+
 export class LichessBot {
     // Always resolved in the constructor (option ?? default, or a fresh value).
     private token: string
@@ -85,6 +88,9 @@ export class LichessBot {
     _now: () => number
     recentlyDeclined: Map<string, number>
     huntAcceptTimeoutMs: number
+    firstMoveTimeoutMs: number
+    opponentSilenceGraceMs: number
+    abandonCheckIntervalMs: number
     defaultRetryAfterSec: number
     rateLimitedUntil: number
     maxBotGamesUntil: number
@@ -124,6 +130,14 @@ export class LichessBot {
 
         // How long to wait, after all candidates are posted, for any of them to accept before giving up on the whole pool.
         this.huntAcceptTimeoutMs = options.huntAcceptTimeoutMs ?? 5000;
+
+        // Abandoned games: Lichess doesn't always end a game whose opponent
+        // stops moving. If they're silent on their turn this long, abort (fewer
+        // than 2 plies) or claim victory. Before the 2nd ply there's no clock
+        // running yet, so a flat timeout; afterwards their clock plus a grace.
+        this.firstMoveTimeoutMs = options.firstMoveTimeoutMs ?? 2 * 60 * 1000;
+        this.opponentSilenceGraceMs = options.opponentSilenceGraceMs ?? 60 * 1000;
+        this.abandonCheckIntervalMs = options.abandonCheckIntervalMs ?? 30 * 1000;
         // Fallback retry-after when Lichess sends a 429 without a Retry-After
         // header. Kept conservative so we don't immediately re-trigger.
         this.defaultRetryAfterSec = options.defaultRetryAfterSec ?? 150;
@@ -216,6 +230,12 @@ export class LichessBot {
 
         // Already running enough games or already hunting? Just schedule a check.
         if (this.activeGames.size >= this.autoplay.target || this.autoplay.huntInFlight) {
+            // Say what we're waiting on (at most every 10 minutes): a stuck game
+            // holding the only slot used to look exactly like a dead bot.
+            if (!this.autoplay.huntInFlight && this._now() - (this.autoplay.lastWaitLogAt ?? 0) >= AUTOPLAY_WAIT_LOG_MS) {
+                this.autoplay.lastWaitLogAt = this._now();
+                this.notifier.info(`[Autoplay] At target (${this.activeGames.size}/${this.autoplay.target}); waiting on: ${[...this.activeGames].join(", ")}`);
+            }
             this.autoplay.timer = setTimeout(() => this._tickAutoplay(), 30_000);
             return;
         }
@@ -573,6 +593,41 @@ export class LichessBot {
         const MAX_CONSECUTIVE_MOVE_FAILURES = 3;
         let consecutiveMoveFailures = 0;
 
+        // Abandoned-game handling. On 2026-10-29 an opponent bot never answered
+        // 1.e4; Lichess left the game "playing" for 9 hours, and it held
+        // autoplay's only slot the whole time. Track when the game last
+        // changed while it's the opponent's turn, and abort / claim victory
+        // once they're gone (Lichess's opponentGone) or silent past their clock.
+        let plies = 0;
+        let opponentToMove = false;
+        let opponentClockMs: number | null = null;
+        let lastChangeAt = this._now();
+        let claimTimer: ReturnType<typeof setTimeout> | null = null;
+        let resolvingAbandon = false;
+
+        const resolveAbandon = async (reason: string) => {
+            if (resolvingAbandon) return;
+            resolvingAbandon = true;
+            
+            if (!(await this._resolveAbandonedGame(gameId, plies, reason))) {
+                // Refused or failed: wait a full silence window before retrying.
+                resolvingAbandon = false;
+                lastChangeAt = this._now();
+            }
+        };
+
+        const abandonWatchdog = setInterval(() => {
+            if (!opponentToMove) return;
+
+            const limitMs = plies < 2
+                ? this.firstMoveTimeoutMs
+                : (opponentClockMs ?? Infinity) + this.opponentSilenceGraceMs;
+
+            const silentMs = this._now() - lastChangeAt;
+
+            if (silentMs > limitMs) resolveAbandon(`silent for ${Math.round(silentMs / 1000)}s`);
+        }, this.abandonCheckIntervalMs);
+
         try {
             try {
                 await engine.start();
@@ -596,10 +651,20 @@ export class LichessBot {
             });
 
             await this.readNdjsonStream(res.body, gameController.signal, async (obj) => {
-                if (obj.type === "chatLine" || obj.type === "opponentGone") return;
+                if (obj.type === "chatLine") return;
+
+                if (obj.type === "opponentGone") {
+                    if (claimTimer) clearTimeout(claimTimer);
+                    claimTimer = null;
+                    if (obj.gone && typeof obj.claimWinInSeconds === "number") {
+                        this.notifier.info(`[${gameId}] Opponent left; resolving in ${obj.claimWinInSeconds}s unless they return.`);
+                        claimTimer = setTimeout(() => resolveAbandon("left the game"), (obj.claimWinInSeconds + 1) * 1000);
+                    }
+                    return;
+                }
 
                 let movesStr = "";
-                let timeInfo = {};
+                let timeInfo: {wtime?: number; btime?: number; winc?: number; binc?: number} = {};
                 let status = "started";
                 let winner = null;
 
@@ -642,6 +707,12 @@ export class LichessBot {
                     return;
                 }
 
+                const previousPlies = plies;
+                plies = movesStr.trim() ? movesStr.trim().split(/\s+/).length : 0;
+                if (obj.type === "gameFull" || plies !== previousPlies) lastChangeAt = this._now();
+                opponentToMove = myColor !== null && !this.isMyTurn(initialFen, movesStr, myColor);
+                opponentClockMs = (myColor === "white" ? timeInfo.btime : timeInfo.wtime) ?? null;
+
                 if (status !== "started") {
                     const result = mapResult(status, winner);
                     this.notifier.info(`[${gameId}] Game over: ${status}, winner: ${winner ?? "draw"}`);
@@ -681,6 +752,8 @@ export class LichessBot {
                 this.notifier.error(`[${gameId}] Game stream error:`, err);
             }
         } finally {
+            clearInterval(abandonWatchdog);
+            if (claimTimer) clearTimeout(claimTimer);
             try {
                 await engine.stop();
             } catch (e) {
@@ -825,6 +898,29 @@ export class LichessBot {
                 }
                 return false;
             }
+        }
+        return false;
+    }
+
+    // End a game whose opponent has gone: abort while fewer than 2 plies are
+    // played (no result, no rating change), otherwise claim victory. Returns
+    // true when Lichess accepts; the game stream then reports the final status
+    // and playGame finishes up as for any other game.
+    async _resolveAbandonedGame(gameId, plies, reason) {
+        const action = plies < 2 ? "abort" : "claim-victory";
+
+        try {
+            const res = await this._lichessFetch(`https://lichess.org/api/bot/game/${gameId}/${action}`, {
+                method: "POST",
+                headers: this.authHeader,
+            });
+            if (res.ok) {
+                this.notifier.warn(`[${gameId}] Opponent ${reason}; ${action === "abort" ? "aborted the game" : "claimed victory"}.`);
+                return true;
+            }
+            this.notifier.warn(`[${gameId}] Opponent ${reason}, but ${action} was refused: HTTP ${res.status}`);
+        } catch (err) {
+            this.notifier.warn(`[${gameId}] Opponent ${reason}, but ${action} failed: ${err?.message}`);
         }
         return false;
     }
