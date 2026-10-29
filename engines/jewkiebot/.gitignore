@@ -1,4 +1,5 @@
 build
+build-*
 tests/performance/results
 .claude
 book.bin
