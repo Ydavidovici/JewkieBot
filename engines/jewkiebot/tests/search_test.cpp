@@ -103,7 +103,7 @@ static void test_qsearch_includes_promotion_captures() {
 	Move move = run_search(fen, SEARCH_DEPTH);
 	std::cout << "  move: " << move.toString() << "\n";
 
-	assert((move.toString() == "g7h8Q" || move.toString() == "g7g8Q") &&
+	assert((move.toString() == "g7h8q" || move.toString() == "g7g8q") &&
 		"qsearch must include promotion-captures");
 	std::cout << "PASS\n\n";
 }

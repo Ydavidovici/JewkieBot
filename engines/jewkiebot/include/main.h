@@ -32,6 +32,9 @@ public:
     std::string playMove(const PlaySettings& settings);
 
     void stopSearch();
+    // Clear any stale stop before starting a search thread; a `stop` sent
+    // after this (even before the thread runs) is then always honoured.
+    void prepareSearch() { searcher.clearStop(); }
     void waitSearch();
     bool isSearching() const { return is_searching.load(); }
     void setSearching(bool val) { is_searching.store(val); }

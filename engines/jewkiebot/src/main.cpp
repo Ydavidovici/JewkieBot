@@ -1,7 +1,9 @@
 #include "main.h"
 #include "board.h"
 #include "bench.h"
+#include "perft.h"
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -21,6 +23,7 @@ static void handle_eval(const std::string& line, Engine& engine);
 static void handle_setoption(const std::string& line, Engine& engine);
 static void handle_evalparams(const std::string& line, Engine& engine);
 static void handle_tune(const std::string& line, Engine& engine);
+static void handle_perft(const std::string& line, Engine& engine);
 
 static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"uci", handle_uci},
@@ -35,6 +38,7 @@ static std::unordered_map<std::string, CommandHandler> UCI_COMMANDS = {
     {"stop", handle_stop},
     {"evalparams", handle_evalparams},
     {"tune", handle_tune},
+    {"perft", handle_perft},
 };
 
 static std::string trim(const std::string& s) {
@@ -301,6 +305,33 @@ static void handle_tune(const std::string& line, Engine& engine) {
     std::cout.flush();
 }
 
+// perft <depth>
+// Counts move-tree leaves from the current position (set with `position`)
+// through the same move path the search uses. Output matches Stockfish's
+// `go perft`: one "<move>: <count>" line per root move, then the total, so a
+// wrong count can be narrowed down move by move.
+static void handle_perft(const std::string& line, Engine& engine) {
+    std::vector<std::string> tokens = tokenize(line);
+    int depth = 1;
+    if (tokens.size() > 1) { try { depth = std::stoi(tokens[1]); } catch (...) {} }
+    if (depth < 1) depth = 1;
+
+    engine.stopSearch();
+    engine.waitSearch();
+
+    auto start = std::chrono::steady_clock::now();
+    uint64_t total = 0;
+    for (const auto& [move, nodes] : perftDivide(engine.getBoard(), depth)) {
+        std::cout << move << ": " << nodes << "\n";
+        total += nodes;
+    }
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    std::cout << "\nNodes searched: " << total << "\n";
+    std::cout << "info string perft time " << ms << " ms, " << (ms > 0 ? total * 1000 / ms : 0) << " nodes/s\n";
+    std::cout.flush();
+}
+
 // Hard ceiling on iterative-deepening depth. Used whenever depth is left
 // unconstrained (`depth 0` or `infinite`); the time manager stops earlier.
 static constexpr int MAX_SEARCH_DEPTH = 64;
@@ -371,6 +402,7 @@ static void handle_go(const std::string& line, Engine& engine) {
     engine.stopSearch();
     engine.waitSearch();
 
+    engine.prepareSearch();
     engine.setSearching(true);
     engine.searchThread = std::thread([&engine, settings]() {
         const std::string bestUci = engine.playMove(settings);
@@ -381,9 +413,14 @@ static void handle_go(const std::string& line, Engine& engine) {
 }
 
 static void handle_bench(const std::string& line, Engine& engine) {
+    // `go` searches on a background thread; benchmarking the same searcher
+    // while it runs would race it (and skew the node count).
+    engine.stopSearch();
+    engine.waitSearch();
+
     BenchSettings settings;
 
-    settings.searchDepth = 9;
+    settings.searchDepth = 11;
     settings.evalTimeMs = 2000;
     settings.runEval = true;
     settings.runSearch = true;

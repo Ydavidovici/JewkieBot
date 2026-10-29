@@ -24,11 +24,30 @@ before editing, they drift.
 Search decides **how far** the engine sees; evaluation decides **how well it
 judges** what it sees at the end of each line. Both cap strength.
 
-## Baseline measurements (2026-10-28)
+## Bench baseline (2026-10-29, the reference for every change)
 
-Taken with `engines/jewkiebot/build/jewkiebot.exe` (built 2026-10-17, matches
-current source), 1 thread, on the dev laptop (16 logical cores). Re-run these
-after every change — they're the cheap sanity check before an SPRT match.
+`bench` (doc 01, layer 2) is deterministic: 32 positions, depth 11, one thread,
+TT cleared per position. The node count is the fingerprint — a pure refactor or
+speed-up must keep it; anything that changes it records the new number.
+
+| Metric | Value |
+| --- | --- |
+| **Bench** | **17,250,320 nodes** (~15 s, ~1.39M nps on the dev laptop) |
+| Eval throughput | ~3.0M evals/s (`bench nosearch`) |
+| Move ordering | 83.8% first-move cutoffs |
+| Quiescence share | 67.3% of nodes |
+| TT hit rate | 21.4% of probes |
+| Perft (`test_perft`) | 8/15 pass; the 7 failures are the castling bug (doc 02). Kiwipete d4: 4,111,156 vs correct 4,085,603 (+25,553). Every root move is off by 58–3,572; the worst four are the knight moves to c6/d7/f7/g6, which attack the squares Black's king castles through |
+| Perft speed | ~14M nodes/s (start position d6: 119,060,324 nodes, correct, in 8.6 s). Baseline for doc 08 |
+| Tactics (`scripts/tactics.ts`) | 194/201 at 500 ms, 189–190/201 at 100 ms (±1 run to run: time-limited). The 6 Lichess misses are pins, a deflection, quiet and defensive moves; the 1 regression is the castling bug (doc 02) |
+
+Run with `scripts/run.sh`, then `bench` (or `printf 'bench\nquit\n' | build/jewkiebot.exe`).
+
+## Earlier measurements (2026-10-28)
+
+Taken with the 2026-10-17 build and the old 3-position bench (not
+deterministic; superseded by the table above), 1 thread, on the dev laptop
+(16 logical cores).
 
 | Metric | Value | How to reproduce |
 | --- | --- | --- |
@@ -49,7 +68,7 @@ measurements**. Only an SPRT match (doc 01) turns them into facts.
 
 | # | Doc | Work | Effort | Rough Elo | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [01-testing-harness.md](01-testing-harness.md) | Perft + SPRT self-play harness | Small–medium | (enabler) | Not started |
+| 1 | [Testing harness](#testing-harness) | Perft, bench, tactics, SPRT | Small–medium | (enabler) | **Done** 2026-10-29 |
 | 2 | [02-castling-legality-bug.md](02-castling-legality-bug.md) | Search castles out of / through check | ~10 lines | +20–60 | **Bug confirmed**, not fixed |
 | 3 | [03-see-and-quiescence.md](03-see-and-quiescence.md) | Static exchange evaluation; prune losing captures | Small–medium | +50–100 | Not started |
 | 4 | [04-eval-tapering-and-tuning.md](04-eval-tapering-and-tuning.md) | MG/EG tapered eval, real Texel tuning | Medium | +100–200 | Not started |
@@ -79,17 +98,51 @@ These are fine as they are, or can't be improved without the harness:
   mid-search mutates the board under the search thread. The backend always
   waits for `bestmove`, so it doesn't happen in practice.)
 
-## Building and testing locally
+## Testing harness
 
-The MSYS2 UCRT64 toolchain is installed (`C:\msys64\ucrt64\bin` on PATH):
+Built 2026-10-29 (it was doc 01, deleted once finished; "doc 01" in the other
+docs means this section). Four checks, cheapest first. Run them all from
+`engines/jewkiebot/` in Git Bash. The MSYS2 UCRT64 toolchain
+(`C:\msys64\ucrt64\bin`) must be on PATH.
 
-```bash
-cd engines/jewkiebot
-cmake -S . -B build-gcc -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-gcc
-ctest --test-dir build-gcc -L tests        # 6 suites, ~40 s
-./build-gcc/jewkiebot.exe                  # UCI; try: bench depth 10
-```
+| Check | Command | What it proves |
+| --- | --- | --- |
+| Build + unit tests | `scripts/build.sh`, `scripts/test.sh [regex]` | Compiles; ctest `-L tests` (`perft_test` included) |
+| Perft | `scripts/run.sh`, then `position startpos` + `perft 5` | Move generation is correct: node counts must match the known values (`tests/perft_test.cpp`). Prints a count per root move ("divide") to find which move is wrong |
+| Bench | `scripts/run.sh`, then `bench` | The `Bench: <nodes>` fingerprint. A refactor or speed-up must keep it; a change that alters it says so in its commit message |
+| Tactics | `bun scripts/tactics.ts [--movetime 500]` | "Did I break tactics": 200 Stockfish-verified Lichess puzzles + bug regressions. A drop of 2–3 or more is a red flag; ±1 is noise |
+| SPRT | `scripts/sprt.sh <base> <new> [stc\|ltc] [gainer\|simplify\|sanity]` | Whether the change is actually stronger. Appends to [results.md](results.md) |
 
-`build-*` is git-ignored. The production image builds with `g++` on Debian in
+**SPRT.** Refs are git refs or `working` (the working tree as is). Both sides
+get built in worktrees under `tools/sprt/`; they play from `UHO_4060_v1.epd` with
+colors swapped per opening, at `Threads=1`, `OwnBook=false`.
+
+- STC is 8+0.08 with Hash 16; LTC is 40+0.4 with Hash 64. Re-test search
+  changes that pass STC at LTC.
+- `gainer` = elo0 0, elo1 5 ("prove it's better"); `simplify` = −5/0 ("prove it
+  isn't worse"); alpha = beta = 0.05. Big early changes (docs 02–04) could use
+  0/10 to finish sooner.
+- Run with the machine otherwise idle (default concurrency is cores/2 − 1). If
+  several games lose on time at the same moment, the machine stalled: check the
+  PGN's `GameEndTime`.
+
+**Tools.** Both are git-ignored, under `engines/jewkiebot/tools/`:
+
+- fastchess 1.8.2 (github.com/Disservin/fastchess releases), in
+  `tools/fastchess/fastchess-windows-x86-64/`
+- `UHO_4060_v1.epd` (github.com/official-stockfish/books)
+
+Rebuilding the tactical suite is rarely needed:
+- `bun scripts/tactics-fetch.ts` samples the Lichess puzzle database.
+- `bun scripts/tactics-verify.ts` drops anything Stockfish disagrees with. Run it with the machine idle.
+
+New bug positions go in `tests/tactics/regressions.epd`.
+
+**UCI gotchas** (harmless so far):
+- `ucinewgame` prints `newgame` and unknown commands print `no dispatch`. Neither is valid UCI.
+- `OwnBook` defaults to `true` but does nothing until `BookFile` is set.
+- `go nodes N` is ignored.
+- `position` received mid-search mutates the board under the search thread.
+
+`build-*` and `build/` are git-ignored. The production image builds with `g++` on Debian in
 `docker/jewkiebot.Dockerfile` (dss repo).

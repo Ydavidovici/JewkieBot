@@ -113,14 +113,14 @@ static void test_pawn_push_capture_promo() {
         Board b; b.loadFEN("k6r/6Pp/8/8/8/8/8/6K1 w - - 0 1");
         auto v = gen_uci(b);
         dump_moves("promo", v);
-        assert(contains(v,"g7g8Q"));
-        assert(contains(v,"g7g8R"));
-        assert(contains(v,"g7g8B"));
-        assert(contains(v,"g7g8N"));
-        assert(contains(v,"g7h8Q"));
-        assert(contains(v,"g7h8R"));
-        assert(contains(v,"g7h8B"));
-        assert(contains(v,"g7h8N"));
+        assert(contains(v,"g7g8q"));
+        assert(contains(v,"g7g8r"));
+        assert(contains(v,"g7g8b"));
+        assert(contains(v,"g7g8n"));
+        assert(contains(v,"g7h8q"));
+        assert(contains(v,"g7h8r"));
+        assert(contains(v,"g7h8b"));
+        assert(contains(v,"g7h8n"));
     }
     std::cout << "  ok pawn pushes/captures/promotions\n\n";
 }

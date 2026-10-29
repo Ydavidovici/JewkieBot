@@ -10,3 +10,7 @@ eval_params.txt
 /tools/cutechess*/
 /tools/*.epd
 /tools/*.zip
+/tools/fastchess/
+/tools/downloads/
+# SPRT work area: per-ref worktrees, builds, logs and PGNs (scripts/sprt.sh)
+/tools/sprt/

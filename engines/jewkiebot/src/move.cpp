@@ -1,4 +1,5 @@
 #include "move.h"
+#include <cctype>
 
 bool Move::isValid() const {
     return start >= 0 && start < 64
@@ -20,7 +21,9 @@ std::string Move::toString() const {
 
     std::string s = toSq(start) + toSq(end);
     if (promo != '\0') {
-        s += promo;
+        // UCI wants the promotion piece lowercase ("e7e8q"); GUIs and match
+        // runners reject "e7e8Q" as an illegal move. Stored uppercase internally.
+        s += static_cast<char>(std::tolower(static_cast<unsigned char>(promo)));
     }
     return s;
 }

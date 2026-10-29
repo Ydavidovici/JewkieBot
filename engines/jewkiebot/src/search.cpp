@@ -225,7 +225,10 @@ std::string Search::pvString(Board& board, const Move& first, int maxLen) const 
 
 Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int incrementMs, int movesToGo, bool infinite) {
     aggregateStats_.reset();
-    stopFlag_.store(false, std::memory_order_relaxed);
+    // The stop flag is NOT cleared here: a UCI `stop` can arrive before this
+    // thread gets going, and clearing it now would lose that stop (`go
+    // infinite` would then never end). It is cleared when a search finishes
+    // (below) and by the UCI layer just before it starts one (clearStop()).
 
     // Pick a time budget for this move.
     if (infinite) {
@@ -324,6 +327,9 @@ Move Search::findBestMove(Board& board, int maxDepth, int timeLeftMs, int increm
     stopFlag_.store(true, std::memory_order_relaxed);
 
     for (auto& t : helpers) t.join();
+
+    // All threads are done with the flag; leave it clear for the next search.
+    stopFlag_.store(false, std::memory_order_relaxed);
 
     for (const auto& ws : workers) {
         aggregateStats_ += ws.stats;

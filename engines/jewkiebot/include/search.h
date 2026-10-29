@@ -22,6 +22,8 @@ public:
     int getThreadCount() const { return numThreads_; }
 
     void stop() { stopFlag_.store(true, std::memory_order_relaxed); }
+    // Called by whoever starts a search, before starting it (see findBestMove).
+    void clearStop() { stopFlag_.store(false, std::memory_order_relaxed); }
 
     struct SearchStats {
         long long totalNodes = 0;

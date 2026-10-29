@@ -13,7 +13,7 @@ struct BenchSettings {
     int evalTimeMs = 2000;
     bool runSearch = true;
     BenchMode searchMode = BenchMode::FIXED_DEPTH;
-    int searchDepth = 9;
+    int searchDepth = 11;   // ~15 s for the 32 positions on one thread
     int searchTimeMs = 1000;
 };
 
