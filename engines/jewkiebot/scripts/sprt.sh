@@ -5,15 +5,20 @@
 # them against each other with fastchess until the SPRT reaches a verdict,
 # and appends one line to docs/engine-improvements/results.md.
 #
-#   scripts/sprt.sh <base> <new> [stc|ltc] [gainer|simplify|sanity] [concurrency]
+#   scripts/sprt.sh <base> <new> [stc|ltc] [gainer|big|simplify|sanity] [concurrency]
 #
 #   base / new   a git ref (dev, main, HEAD~1, a branch or commit), or "working"
 #                for the working tree exactly as it is, uncommitted edits included
 #   stc | ltc    time control: 8+0.08 (default) or 40+0.4
-#   gainer       prove new is better:      elo0=0  elo1=5   (default)
-#   simplify     prove new isn't worse:    elo0=-5 elo1=0
+#   gainer       prove new is better:      elo0=0  elo1=5   (default) small tweaks
+#   big          prove new is much better: elo0=0  elo1=10  expected gains of +10 or more
+#   simplify     prove new isn't worse:    elo0=-5 elo1=0   fixes, refactors, speed-ups
 #   sanity       no SPRT, a fixed 200 games: checks the setup (same engine
 #                twice should land near 0 Elo with no crashes or time losses)
+#
+# Games needed grow roughly with 1/(elo1-elo0)^2, and are most when the true
+# gain sits near the bounds: `big` needs about a quarter of `gainer`'s games,
+# but may reject a real +5 change. Doc 02 (+9) took 8,050 games under gainer.
 #   concurrency  games in parallel (default: logical cores / 2 - 1)
 #
 # Run with the machine otherwise idle. Several games losing on time at the
@@ -47,7 +52,7 @@ else
     FASTCHESS="$(command -v fastchess || true)"
 fi
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [[ $# -ge 2 ]] || usage
 BASE_REF="$1" NEW_REF="$2" TC_NAME="${3:-stc}" MODE="${4:-gainer}"
 # Default: about one game per physical core, minus one left free for the OS.
@@ -64,6 +69,7 @@ case "$TC_NAME" in
 esac
 case "$MODE" in
     gainer)   SPRT=(-sprt elo0=0 elo1=5 alpha=0.05 beta=0.05);  ROUNDS=20000 ;;
+    big)      SPRT=(-sprt elo0=0 elo1=10 alpha=0.05 beta=0.05); ROUNDS=20000 ;;
     simplify) SPRT=(-sprt elo0=-5 elo1=0 alpha=0.05 beta=0.05); ROUNDS=20000 ;;
     sanity)   SPRT=();                                          ROUNDS=100 ;;
     *) usage ;;
@@ -118,7 +124,7 @@ for exe in "$BASE_EXE" "$NEW_EXE"; do
 done
 echo "base: $BASE_SHA  bench $BASE_BENCH"
 echo "new:  $NEW_SHA  bench $NEW_BENCH"
-[[ "$BASE_BENCH" == "$NEW_BENCH" && "$MODE" == "gainer" ]] &&
+[[ "$BASE_BENCH" == "$NEW_BENCH" && "$MODE" =~ ^(gainer|big)$ ]] &&
     echo "note: identical bench node counts - the change may not alter search at all"
 
 LOG="$WORK/$STAMP.log"

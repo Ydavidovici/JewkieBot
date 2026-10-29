@@ -111,7 +111,7 @@ docs means this section). Four checks, cheapest first. Run them all from
 | Perft | `scripts/run.sh`, then `position startpos` + `perft 5` | Move generation is correct: node counts must match the known values (`tests/perft_test.cpp`). Prints a count per root move ("divide") to find which move is wrong |
 | Bench | `scripts/run.sh`, then `bench` | The `Bench: <nodes>` fingerprint. A refactor or speed-up must keep it; a change that alters it says so in its commit message |
 | Tactics | `bun scripts/tactics.ts [--movetime 500]` | "Did I break tactics": 200 Stockfish-verified Lichess puzzles + bug regressions. Same code scores 190–196/200 at 500 ms, so only a drop below ~188 is a red flag. Regressions must stay solved |
-| SPRT | `scripts/sprt.sh <base> <new> [stc\|ltc] [gainer\|simplify\|sanity]` | Whether the change is actually stronger. Appends to [results.md](results.md) |
+| SPRT | `scripts/sprt.sh <base> <new> [stc\|ltc] [gainer\|big\|simplify\|sanity]` | Whether the change is actually stronger. Appends to [results.md](results.md) |
 
 **SPRT.** Refs are git refs or `working` (the working tree as is). Both sides
 get built in worktrees under `tools/sprt/`; they play from `UHO_4060_v1.epd` with
@@ -119,9 +119,19 @@ colors swapped per opening, at `Threads=1`, `OwnBook=false`.
 
 - STC is 8+0.08 with Hash 16; LTC is 40+0.4 with Hash 64. Re-test search
   changes that pass STC at LTC.
-- `gainer` = elo0 0, elo1 5 ("prove it's better"); `simplify` = −5/0 ("prove it
-  isn't worse"); alpha = beta = 0.05. Big early changes (docs 02–04) could use
-  0/10 to finish sooner.
+- Pick the mode by the kind of change. The number of games needed grows
+  roughly with 1/(bound width)². It's largest when the true gain sits near a bound.
+
+  | Change | Mode | Bounds (Elo) | Why |
+  | --- | --- | --- | --- |
+  | Correctness fix, refactor, speed-up | `simplify` | −5 / 0 | Only has to prove "not worse"; a real gain finishes it fast |
+  | Expected gain of +10 or more (docs 03, 04, 06) | `big` | 0 / +10 | About a quarter of `gainer`'s games, but may reject a real +5 |
+  | Small tweak: one heuristic or parameter (doc 05) | `gainer` | 0 / +5 | Detects small gains; can take hours |
+
+  alpha = beta = 0.05. Doc 02 (+9, a fix) ran under `gainer` and took 8,050
+  games (7.5 h). `simplify` was the right mode for it.
+- Start runs longer than an hour in your own terminal, not as a Claude Code
+  background task, which gets stopped when memory runs low.
 - Run with the machine otherwise idle (default concurrency is cores/2 − 1). If
   several games lose on time at the same moment, the machine stalled: check the
   PGN's `GameEndTime`.
