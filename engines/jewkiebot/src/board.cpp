@@ -544,6 +544,78 @@ bool Board::isSquareAttacked(int squareIndex, Color attackingColor) const {
     return false;
 }
 
+uint64_t Board::attackersTo(int squareIndex, uint64_t occupancy) const {
+    const uint64_t bishops_queens = white_bitboards[BISHOP] | black_bitboards[BISHOP] |
+                                    white_bitboards[QUEEN] | black_bitboards[QUEEN];
+    const uint64_t rooks_queens = white_bitboards[ROOK] | black_bitboards[ROOK] |
+                                  white_bitboards[QUEEN] | black_bitboards[QUEEN];
+    // Same convention as isSquareAttacked: a pawn attacks squareIndex when it
+    // sits where an opposite-colored pawn on squareIndex would attack.
+    return (ATTACK_TABLES.pawn_attacks[1][squareIndex] & white_bitboards[PAWN])
+         | (ATTACK_TABLES.pawn_attacks[0][squareIndex] & black_bitboards[PAWN])
+         | (ATTACK_TABLES.knight_attacks[squareIndex] & (white_bitboards[KNIGHT] | black_bitboards[KNIGHT]))
+         | (ATTACK_TABLES.king_attacks[squareIndex] & (white_bitboards[KING] | black_bitboards[KING]))
+         | (bishopAttacks(squareIndex, occupancy) & bishops_queens)
+         | (rookAttacks(squareIndex, occupancy) & rooks_queens);
+}
+
+// The search's piece values (search.cpp PIECE_VALUES), indexed by PieceIndex.
+// The king counts 0: a king capture is only legal onto an undefended square,
+// and makeMove() rejects the rest. Index PieceTypeCount is an empty square.
+static constexpr int SEE_VALUES[Board::PieceTypeCount + 1] = {100, 320, 330, 500, 900, 0, 0};
+
+// The swap algorithm (as in Stockfish's Position::see_ge). `swap` tracks how
+// far the running balance is from the threshold; `result` flips each time a
+// side recaptures, and the loop stops as soon as the side to recapture would
+// end up below the threshold even if it then lost nothing more.
+bool Board::seeGE(const Move& move, int threshold) const {
+    if (move.type != MoveType::NORMAL && move.type != MoveType::CAPTURE)
+        return 0 >= threshold;
+
+    const int from = move.start, to = move.end;
+
+    int swap = SEE_VALUES[mailbox_[to]] - threshold;
+    if (swap < 0) return false;                  // even a free capture isn't enough
+    swap = SEE_VALUES[mailbox_[from]] - swap;
+    if (swap <= 0) return true;                  // enough even if we lose the mover
+
+    uint64_t occupied = (occupancy_[0] | occupancy_[1]) ^ (1ULL << from) ^ (1ULL << to);
+    uint64_t attackers = attackersTo(to, occupied);
+    const uint64_t bishops_queens = white_bitboards[BISHOP] | black_bitboards[BISHOP] |
+                                    white_bitboards[QUEEN] | black_bitboards[QUEEN];
+    const uint64_t rooks_queens = white_bitboards[ROOK] | black_bitboards[ROOK] |
+                                  white_bitboards[QUEEN] | black_bitboards[QUEEN];
+
+    int stm = (side_to_move == Color::WHITE ? 0 : 1);
+    int result = 1;
+
+    while (true) {
+        stm ^= 1;
+        attackers &= occupied;
+        const uint64_t stm_attackers = attackers & occupancy_[stm];
+        if (!stm_attackers) break;
+        result ^= 1;
+
+        const auto& bbs = (stm == 0 ? white_bitboards : black_bitboards);
+        int piece = PAWN;
+        while (piece < KING && !(stm_attackers & bbs[piece])) ++piece;
+
+        if (piece == KING)
+            // The king may only recapture if the other side has nothing left.
+            return (attackers & occupancy_[stm ^ 1]) ? !result : result;
+
+        if ((swap = SEE_VALUES[piece] - swap) < result) break;
+
+        occupied ^= 1ULL << std::countr_zero(stm_attackers & bbs[piece]);
+        // Removing the piece may reveal a slider behind it.
+        if (piece == PAWN || piece == BISHOP || piece == QUEEN)
+            attackers |= bishopAttacks(to, occupied) & bishops_queens;
+        if (piece == ROOK || piece == QUEEN)
+            attackers |= rookAttacks(to, occupied) & rooks_queens;
+    }
+    return result;
+}
+
 void Board::generateLegalMoves(MoveList& out) const {
     MoveList pseudo_moves;
     generatePseudoMoves(pseudo_moves);

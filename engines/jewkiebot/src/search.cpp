@@ -704,6 +704,11 @@ int Search::quiescence(WorkerState& ws, Board& board, int alpha, int beta, int p
                 gain += PIECE_VALUES[Board::QUEEN] - PIECE_VALUES[Board::PAWN];
             }
             if (standPat + gain + DELTA_PRUNING_MARGIN <= alpha) continue;
+
+            // SEE pruning: skip captures that lose material once the
+            // exchange on the target square plays out (QxP defended by a
+            // pawn). Evasions are never skipped.
+            if (move.isCapture() && !board.seeGE(move, 0)) continue;
         }
 
         if (!board.makeMove(move)) {

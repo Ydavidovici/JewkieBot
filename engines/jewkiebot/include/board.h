@@ -53,6 +53,16 @@ public:
     static uint64_t kingAttackMask(int square);
     static uint64_t bishopAttackMask(int square, uint64_t occupancy);
     static uint64_t rookAttackMask(int square, uint64_t occupancy);
+    // Every piece of either color that attacks `square`, with sliders
+    // resolved against `occupancy` (pass a reduced mask to reveal x-rays).
+    uint64_t attackersTo(int square, uint64_t occupancy) const;
+    // Static exchange evaluation: true if `move` wins at least `threshold`
+    // centipawns once both sides keep recapturing on its target square with
+    // their cheapest piece, each free to stop. Quiet moves work too (is the
+    // piece safe there?). Castling, en passant and promotions count as 0.
+    // Pins are ignored.
+    bool seeGE(const Move& move, int threshold) const;
+
     Color sideToMove() const {return side_to_move;}
     PieceIndex getPieceAt(int square) const {return static_cast<PieceIndex>(mailbox_[square]);}
 
