@@ -1,6 +1,6 @@
 # 03 — SEE (static exchange evaluation) and quiescence pruning
 
-**Status:** not started
+**Status:** done 2026-10-30 (steps 1–4). Two commits, two SPRTs, both passed: **+62** and **+57 Elo**. See "Result" at the end. Steps 5 and 6 are still open
 **Effort:** small–medium (~100–150 lines + tests)
 **Elo:** roughly +50–100
 
@@ -233,3 +233,43 @@ the harness exists by then — it tells us which half carried the gain.
   than "neutral"? Probably not worth it initially.
 - Exclude pinned attackers in SEE? Stockfish does; it's a refinement, not a
   first-pass requirement.
+
+## Result (2026-10-30)
+
+Steps 1–4 shipped as two commits, each with its own SPRT (STC 8+0.08, `big`
+mode 0/+10), so we know what each half was worth:
+
+| Commit | Change | Bench (same depth) | SPRT |
+| --- | --- | --- | --- |
+| `c122ce4` | `Board::attackersTo` + `seeGE`; quiescence skips captures with SEE < 0 | 16,371,041 → 10,870,295 (−34%) | **+62 ± 25**, 520 games, H1 accepted |
+| `1699902` | `scoreMoves`: captures with SEE < 0 after every quiet move | 10,870,295 → 10,053,006 | **+57 ± 23**, 556 games, H1 accepted (31 min) |
+
+Roughly +120 Elo together, at the top of the +50–100 estimate.
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Quiescence share of nodes | 65.6% | 44.2% |
+| First-move cutoffs | 83.8% | 91.7% |
+| Kiwipete, depth 1 | 10,842 nodes (2026-10-28 build) | 2,083 |
+| Tactics, Lichess file | 190–196/200 | 194–197/200 |
+
+Notes:
+- SEE follows Stockfish's `see_ge` swap loop, using the search's piece values
+  (king counts 0) and without pin handling. `tests/see_test.cpp` has 14 exchanges
+  worked out by hand. Each is checked at its exact value and at value + 1, including two
+  x-rays revealed behind a *recapturing* piece. A first version of the
+  test missed this: deleting the x-ray update broke nothing until those two
+  were added.
+- The first SPRT ran overnight and the laptop slept. Each brief wake-up made
+  all 7 running games lose on time together (21 of 23 time losses). Without those
+  28 games the result is the same (+62). The second SPRT ran in a terminal
+  with sleep disabled: 0 time losses.
+- Ordering exposed a stale check in `time_manager_test`: it still assumed a 500 ms
+  budget, but the real hard deadline for that clock is 4.5 s. Fixed in
+  `1699902`.
+- History scores can reach 10,000,000, above the TT move and good captures.
+  That's left for doc 05, as planned.
+
+Still open: **step 5**, SEE pruning in the main search (separate SPRT), and
+**step 6**, a captures-only generator for quiescence (pure speed; bench must
+stay 10,053,006).

@@ -32,14 +32,14 @@ speed-up must keep it; anything that changes it records the new number.
 
 | Metric | Value |
 | --- | --- |
-| **Bench** | **17,250,320 nodes** (~15 s, ~1.39M nps on the dev laptop). After doc 02: **16,371,041** |
+| **Bench** | **17,250,320 nodes** (~15 s, ~1.39M nps on the dev laptop). After doc 02: **16,371,041**. After doc 03: **10,053,006** |
 | Eval throughput | ~3.0M evals/s (`bench nosearch`) |
-| Move ordering | 83.8% first-move cutoffs |
-| Quiescence share | 67.3% of nodes |
+| Move ordering | 83.8% first-move cutoffs; **91.7%** after doc 03 |
+| Quiescence share | 67.3% of nodes; **44.2%** after doc 03 |
 | TT hit rate | 21.4% of probes |
 | Perft (`test_perft`) | 15/15 since doc 02. Before it: 8/15 pass; the 7 failures are the castling bug (doc 02). Kiwipete d4: 4,111,156 vs correct 4,085,603 (+25,553). Every root move is off by 58–3,572; the worst four are the knight moves to c6/d7/f7/g6, which attack the squares Black's king castles through |
 | Perft speed | ~14M nodes/s (start position d6: 119,060,324 nodes, correct, in 8.6 s). Baseline for doc 08 |
-| Tactics (`scripts/tactics.ts`) | Lichess file: 190–196/200 at 500 ms over 5 runs (same code; time-limited search varies run to run), 189–190/200 at 100 ms. Misses are mostly pins, deflections, quiet and defensive moves. Regression file: 1/1 since doc 02 |
+| Tactics (`scripts/tactics.ts`) | Lichess file: 190–196/200 at 500 ms over 5 runs (same code; time-limited search varies run to run), 189–190/200 at 100 ms. Misses are mostly pins, deflections, quiet and defensive moves. Regression file: 1/1 since doc 02. After doc 03: 194–197/200 |
 
 Run with `scripts/run.sh`, then `bench` (or `printf 'bench\nquit\n' | build/jewkiebot.exe`).
 
@@ -70,7 +70,7 @@ measurements**. Only an SPRT match (doc 01) turns them into facts.
 | --- | --- | --- | --- | --- | --- |
 | 1 | [Testing harness](#testing-harness) | Perft, bench, tactics, SPRT | Small–medium | (enabler) | **Done** 2026-10-29 |
 | 2 | [02-castling-legality-bug.md](02-castling-legality-bug.md) | Search castles out of / through check | ~10 lines | +20–60 (measured: **+9 ± 6**) | **Done** 2026-10-29, SPRT passed |
-| 3 | [03-see-and-quiescence.md](03-see-and-quiescence.md) | Static exchange evaluation; prune losing captures | Small–medium | +50–100 | Not started |
+| 3 | [03-see-and-quiescence.md](03-see-and-quiescence.md) | Static exchange evaluation; prune losing captures | Small–medium | +50–100 (measured: **+62** and **+57**) | **Done** 2026-10-30, both SPRTs passed |
 | 4 | [04-eval-tapering-and-tuning.md](04-eval-tapering-and-tuning.md) | MG/EG tapered eval, real Texel tuning | Medium | +100–200 | Not started |
 | 5 | [05-search-heuristics.md](05-search-heuristics.md) | History, countermoves, TT aging, IIR, … | Medium (many small) | +50–100 total | Not started |
 | 6 | [06-king-safety-and-endgames.md](06-king-safety-and-endgames.md) | King attack eval, draw scaling | Medium | +30–60 | Not started |
