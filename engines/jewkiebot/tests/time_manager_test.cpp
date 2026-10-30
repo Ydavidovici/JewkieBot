@@ -371,7 +371,13 @@ static void test_search_returns_within_time_budget() {
     std::cout << "--- test_search_returns_within_time_budget ---\n";
     SearchResult r = run_timed(MIDDLEGAME, 60000);
     REQUIRE_MSG(r.move.isValid(), "must return a valid move");
-    REQUIRE_MSG(r.elapsedMs < 2500.0, "500ms budget: finish within 2500ms (5x)");
+    // 60 s, no increment: soft = (60000 - overhead) / DEFAULT_MTG = 1497 ms,
+    // checked between iterations; hard = HARD_MULT x soft = 4491 ms, enforced
+    // inside the search. An iteration started before the soft target may run
+    // on to the hard one, so that is the promise to check (+100 ms to stop).
+    const double hardMs = double((60000 - TimeManager::MOVE_OVERHEAD_MS) / TimeManager::DEFAULT_MTG)
+                        * TimeManager::HARD_MULT;
+    REQUIRE_MSG(r.elapsedMs < hardMs + 100.0, "60 s clock: must stop by the hard deadline (~4.5 s)");
     std::cout << "  elapsed=" << r.elapsedMs << "ms  move=" << r.move.toString() << "\n";
     std::cout << "PASS\n\n";
 }

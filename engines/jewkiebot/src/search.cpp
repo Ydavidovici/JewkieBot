@@ -17,6 +17,9 @@ constexpr int ORDER_CAPTURE_BASE = 1000000;  // + MVV-LVA score
 constexpr int ORDER_PROMOTION = 900000;      // + small bonus for queening
 constexpr int ORDER_FIRST_KILLER = 800000;
 constexpr int ORDER_SECOND_KILLER = 799000;
+// Captures that lose material by SEE go after every quiet move (history
+// scores are never negative), still ordered among themselves by MVV-LVA.
+constexpr int ORDER_BAD_CAPTURE_BASE = -1000000;
 
 // Reverse futility pruning: fail high immediately when the static eval is
 // this far above beta at shallow depth.
@@ -752,7 +755,8 @@ void Search::scoreMoves(const WorkerState& ws, const Board& board, const MoveLis
         if (haveTTMove && sameMove(m, ttMove)) {
             scores[i] = ORDER_TT_MOVE;
         } else if (m.isCapture()) {
-            scores[i] = ORDER_CAPTURE_BASE + getMvvLvaScore(board, m);
+            scores[i] = (board.seeGE(m, 0) ? ORDER_CAPTURE_BASE : ORDER_BAD_CAPTURE_BASE)
+                      + getMvvLvaScore(board, m);
         } else if (m.type == MoveType::PROMOTION) {
             scores[i] = ORDER_PROMOTION + (m.promo == 'Q' ? 100 : 0);
         } else if (sameMove(m, ws.killers[plyFromRoot][0])) {
