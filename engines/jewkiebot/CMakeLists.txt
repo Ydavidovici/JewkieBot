@@ -49,6 +49,13 @@ target_link_libraries(bench PUBLIC core_engine)
 add_executable(jewkiebot src/main.cpp)
 target_include_directories(jewkiebot PRIVATE ${ENGINE_INCLUDE_DIR})
 target_link_libraries(jewkiebot PRIVATE core_engine bench)
+if (MINGW)
+    # Self-contained on Windows: linked against the GCC runtime DLLs, the exe
+    # picks up whichever libstdc++-6.dll is first on PATH. Git Bash puts Git's
+    # own (incompatible) copy first, and the engine then crashed on its first
+    # file open (EvalParamsFile, BookFile).
+    target_link_options(jewkiebot PRIVATE -static)
+endif ()
 
 enable_testing()
 
@@ -60,8 +67,9 @@ add_executable(test_book tests/book_test.cpp)
 add_executable(test_time_manager tests/time_manager_test.cpp)
 add_executable(test_perft tests/perft_test.cpp)
 add_executable(test_see tests/see_test.cpp)
+add_executable(test_eval_params tests/eval_params_test.cpp)
 
-foreach (test_exe IN ITEMS test_board_move test_eval test_search test_transposition_table test_book test_time_manager test_perft test_see)
+foreach (test_exe IN ITEMS test_board_move test_eval test_search test_transposition_table test_book test_time_manager test_perft test_see test_eval_params)
     target_link_libraries(${test_exe} PRIVATE core_engine)
     target_link_options(${test_exe} PRIVATE -static -static-libgcc -static-libstdc++)
     # The tests check with assert(); Release/RelWithDebInfo define NDEBUG,
@@ -92,6 +100,9 @@ set_tests_properties(perft_test PROPERTIES LABELS "tests")
 
 add_test(NAME see_test COMMAND test_see)
 set_tests_properties(see_test PROPERTIES LABELS "tests")
+
+add_test(NAME eval_params_test COMMAND test_eval_params)
+set_tests_properties(eval_params_test PROPERTIES LABELS "tests")
 
 add_executable(perf_board_move tests/Performance/board_move_performance.cpp)
 target_link_libraries(perf_board_move PRIVATE core_engine)

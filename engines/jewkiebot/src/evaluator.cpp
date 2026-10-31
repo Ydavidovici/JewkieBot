@@ -45,39 +45,43 @@ void initEvalMasks() {
     });
 }
 
+// Sums the terms into a middlegame and an endgame score (evaluate()).
+struct ScoreSink {
+    const EvalScore* params;
+    const EvalScore (*pieceSquare)[6][64];
+    int mg = 0;
+    int eg = 0;
+    void add(int param, int count) {
+        mg += params[param].mg * count;
+        eg += params[param].eg * count;
+    }
+    // One piece of `color` (0 white, 1 black): material + PST, pre-fused.
+    void addPiece(int color, int piece, int square) {
+        mg += pieceSquare[color][piece][square].mg;
+        eg += pieceSquare[color][piece][square].eg;
+    }
+};
+
+// Counts how often each parameter is used (trace()).
+struct TraceSink {
+    std::array<int, EvalParam::COUNT> counts{};
+    void add(int param, int count) { counts[param] += count; }
+    void addPiece(int color, int piece, int square) {
+        const int sign = (color == 0 ? 1 : -1);
+        if (piece < Board::KING) counts[EvalParam::MATERIAL + piece] += sign;
+        counts[EvalParam::PST + piece * 64 + (color == 0 ? square : square ^ 56)] += sign;
+    }
+};
+
 } // namespace
 
 Evaluator::Evaluator() {
     initEvalMasks();
-    initializePieceSquareTables();
+    initializeDefaults();
 }
 
-int Evaluator::evaluate(const Board& board, Color sideToMove) const {
-    int score = 0;
-
-    // Pawns through queens use the fused value+PST tables; the king is
-    // handled separately below so its table can be phase-tapered.
-    for (int pieceIndex = 0; pieceIndex < Board::KING; ++pieceIndex) {
-        auto piece = static_cast<Board::PieceIndex>(pieceIndex);
-
-        uint64_t whiteBitBoard = board.pieceBB(Color::WHITE, piece);
-        while (whiteBitBoard) {
-            score += combinedTables[0][pieceIndex][__builtin_ctzll(whiteBitBoard)];
-            whiteBitBoard &= whiteBitBoard - 1;
-        }
-
-        uint64_t blackBitBoard = board.pieceBB(Color::BLACK, piece);
-        while (blackBitBoard) {
-            score -= combinedTables[1][pieceIndex][__builtin_ctzll(blackBitBoard)];
-            blackBitBoard &= blackBitBoard - 1;
-        }
-    }
-
-    // Tapered king evaluation: blend the middlegame table (castled safety)
-    // into the endgame table (centralization) as material comes off.
-    // Phase weights: N=1, B=1, R=2, Q=4; 24 = all pieces on the board.
-    constexpr int PHASE_MAX = 24;
-    int phase =
+int Evaluator::gamePhase(const Board& board) {
+    const int phase =
         std::popcount(board.pieceBB(Color::WHITE, Board::KNIGHT)) +
         std::popcount(board.pieceBB(Color::BLACK, Board::KNIGHT)) +
         std::popcount(board.pieceBB(Color::WHITE, Board::BISHOP)) +
@@ -86,55 +90,78 @@ int Evaluator::evaluate(const Board& board, Color sideToMove) const {
         2 * std::popcount(board.pieceBB(Color::BLACK, Board::ROOK)) +
         4 * std::popcount(board.pieceBB(Color::WHITE, Board::QUEEN)) +
         4 * std::popcount(board.pieceBB(Color::BLACK, Board::QUEEN));
-    phase = std::min(phase, PHASE_MAX);
+    return std::min(phase, PHASE_MAX);
+}
 
-    int kingValue = pieceValues[Board::KING];
+int Evaluator::evaluate(const Board& board, Color sideToMove) const {
+    ScoreSink sink{params.data(), pieceSquare};
+    walkTerms(board, sink);
 
-    uint64_t whiteKing = board.pieceBB(Color::WHITE, Board::KING);
-    while (whiteKing) {
-        int square = __builtin_ctzll(whiteKing);
-        int pst = (whiteKingTableMG[square] * phase +
-                   whiteKingTableEG[square] * (PHASE_MAX - phase)) / PHASE_MAX;
-        score += kingValue + pst;
-        whiteKing &= whiteKing - 1;
-    }
-
-    uint64_t blackKing = board.pieceBB(Color::BLACK, Board::KING);
-    while (blackKing) {
-        int square = __builtin_ctzll(blackKing);
-        int pst = (blackKingTableMG[square] * phase +
-                   blackKingTableEG[square] * (PHASE_MAX - phase)) / PHASE_MAX;
-        score -= kingValue + pst;
-        blackKing &= blackKing - 1;
-    }
-
-    // Structural heuristics: pawn structure (doubled/isolated/passed) and
-    // piece activity (mobility, bishop pair, rooks on open files).
-    score += pawnStructureScore(board, Color::WHITE) - pawnStructureScore(board, Color::BLACK);
-    score += pieceActivityScore(board, Color::WHITE) - pieceActivityScore(board, Color::BLACK);
-
-    // King shelter only matters while the opponent still has attacking
-    // material, so it fades out with the phase — in the endgame the tapered
-    // king PST above takes over and pulls the king to the center instead.
-    score += (kingShelterScore(board, Color::WHITE) - kingShelterScore(board, Color::BLACK)) * phase / PHASE_MAX;
+    // Tapered: the middlegame score with all pieces on (phase 24), sliding
+    // to the endgame score as material comes off.
+    const int phase = gamePhase(board);
+    int score = (sink.mg * phase + sink.eg * (PHASE_MAX - phase)) / PHASE_MAX;
+    score += KING_VALUE * (std::popcount(board.pieceBB(Color::WHITE, Board::KING)) -
+                           std::popcount(board.pieceBB(Color::BLACK, Board::KING)));
 
     return (sideToMove == Color::WHITE ? score : -score);
 }
 
+Evaluator::Trace Evaluator::trace(const Board& board) const {
+    TraceSink sink;
+    walkTerms(board, sink);
+
+    Trace t;
+    for (int p = 0; p < EvalParam::COUNT; ++p) {
+        if (sink.counts[p]) t.terms.emplace_back(static_cast<int16_t>(p), static_cast<int16_t>(sink.counts[p]));
+    }
+    t.phase = gamePhase(board);
+    t.kings = std::popcount(board.pieceBB(Color::WHITE, Board::KING)) -
+              std::popcount(board.pieceBB(Color::BLACK, Board::KING));
+    return t;
+}
+
+template <typename Sink>
+void Evaluator::walkTerms(const Board& board, Sink& sink) const {
+    // Material (pawn..queen) and piece-square tables. Black's squares are
+    // mirrored (sq ^ 56) so one White-oriented table serves both colors.
+    for (int piece = 0; piece <= Board::KING; ++piece) {
+        const auto pieceIndex = static_cast<Board::PieceIndex>(piece);
+
+        uint64_t white = board.pieceBB(Color::WHITE, pieceIndex);
+        while (white) {
+            sink.addPiece(0, piece, std::countr_zero(white));
+            white &= white - 1;
+        }
+
+        uint64_t black = board.pieceBB(Color::BLACK, pieceIndex);
+        while (black) {
+            sink.addPiece(1, piece, std::countr_zero(black));
+            black &= black - 1;
+        }
+    }
+
+    walkPawnStructure(board, Color::WHITE, 1, sink);
+    walkPawnStructure(board, Color::BLACK, -1, sink);
+    walkPieceActivity(board, Color::WHITE, 1, sink);
+    walkPieceActivity(board, Color::BLACK, -1, sink);
+    walkKingShelter(board, Color::WHITE, 1, sink);
+    walkKingShelter(board, Color::BLACK, -1, sink);
+
+    sink.add(EvalParam::TEMPO, board.sideToMove() == Color::WHITE ? 1 : -1);
+}
+
 // Doubled and isolated pawns are penalized; passed pawns are rewarded more
 // the closer they get to promotion.
-int Evaluator::pawnStructureScore(const Board& board, Color color) const {
+template <typename Sink>
+void Evaluator::walkPawnStructure(const Board& board, Color color, int sign, Sink& sink) const {
     Color enemy = (color == Color::WHITE ? Color::BLACK : Color::WHITE);
     uint64_t ownPawns = board.pieceBB(color, Board::PAWN);
     uint64_t enemyPawns = board.pieceBB(enemy, Board::PAWN);
 
-    int score = 0;
-
     for (int file = 0; file < 8; ++file) {
         int pawnsOnFile = std::popcount(ownPawns & fileMask(file));
-        if (pawnsOnFile > 1) {
-            score -= doubledPawnPenalty * (pawnsOnFile - 1);
-        }
+        if (pawnsOnFile > 1) sink.add(EvalParam::DOUBLED_PAWN, sign * (pawnsOnFile - 1));
     }
 
     uint64_t scan = ownPawns;
@@ -143,58 +170,51 @@ int Evaluator::pawnStructureScore(const Board& board, Color color) const {
         scan &= scan - 1;
         int file = square % 8;
 
-        if (!(ownPawns & adjacentFilesMask(file))) {
-            score -= isolatedPawnPenalty;
-        }
+        if (!(ownPawns & adjacentFilesMask(file))) sink.add(EvalParam::ISOLATED_PAWN, sign);
 
         if (!(passed_pawn_masks[static_cast<int>(color)][square] & enemyPawns)) {
             int relativeRank = (color == Color::WHITE ? square / 8 : 7 - square / 8);
-            score += passedPawnBonus[relativeRank];
+            sink.add(EvalParam::PASSED_PAWN + relativeRank, sign);
         }
     }
-
-    return score;
 }
 
 // "Passive pieces" in numbers: each knight/bishop/rook/queen earns a small
 // bonus per square it can reach, so pieces stuck behind their own pawns
 // score low. Adds the bishop pair and rooks on (semi-)open files.
-int Evaluator::pieceActivityScore(const Board& board, Color color) const {
+template <typename Sink>
+void Evaluator::walkPieceActivity(const Board& board, Color color, int sign, Sink& sink) const {
     Color enemy = (color == Color::WHITE ? Color::BLACK : Color::WHITE);
     uint64_t own = board.occupancy(color);
     uint64_t all = own | board.occupancy(enemy);
     uint64_t ownPawns = board.pieceBB(color, Board::PAWN);
     uint64_t enemyPawns = board.pieceBB(enemy, Board::PAWN);
 
-    int score = 0;
-
-    if (std::popcount(board.pieceBB(color, Board::BISHOP)) >= 2) {
-        score += bishopPairBonus;
-    }
+    if (std::popcount(board.pieceBB(color, Board::BISHOP)) >= 2) sink.add(EvalParam::BISHOP_PAIR, sign);
 
     uint64_t knights = board.pieceBB(color, Board::KNIGHT);
     while (knights) {
         int square = std::countr_zero(knights);
         knights &= knights - 1;
-        score += mobilityWeights[0] * std::popcount(Board::knightAttackMask(square) & ~own);
+        sink.add(EvalParam::MOBILITY + 0, sign * std::popcount(Board::knightAttackMask(square) & ~own));
     }
 
     uint64_t bishops = board.pieceBB(color, Board::BISHOP);
     while (bishops) {
         int square = std::countr_zero(bishops);
         bishops &= bishops - 1;
-        score += mobilityWeights[1] * std::popcount(Board::bishopAttackMask(square, all) & ~own);
+        sink.add(EvalParam::MOBILITY + 1, sign * std::popcount(Board::bishopAttackMask(square, all) & ~own));
     }
 
     uint64_t rooks = board.pieceBB(color, Board::ROOK);
     while (rooks) {
         int square = std::countr_zero(rooks);
         rooks &= rooks - 1;
-        score += mobilityWeights[2] * std::popcount(Board::rookAttackMask(square, all) & ~own);
+        sink.add(EvalParam::MOBILITY + 2, sign * std::popcount(Board::rookAttackMask(square, all) & ~own));
 
         uint64_t file = fileMask(square % 8);
         if (!(file & ownPawns)) {
-            score += (file & enemyPawns) ? rookSemiOpenFileBonus : rookOpenFileBonus;
+            sink.add((file & enemyPawns) ? EvalParam::ROOK_SEMI_OPEN_FILE : EvalParam::ROOK_OPEN_FILE, sign);
         }
     }
 
@@ -203,19 +223,18 @@ int Evaluator::pieceActivityScore(const Board& board, Color color) const {
         int square = std::countr_zero(queens);
         queens &= queens - 1;
         uint64_t attacks = Board::rookAttackMask(square, all) | Board::bishopAttackMask(square, all);
-        score += mobilityWeights[3] * std::popcount(attacks & ~own);
+        sink.add(EvalParam::MOBILITY + 3, sign * std::popcount(attacks & ~own));
     }
-
-    return score;
 }
 
 // Pawn cover in front of the king, on its file and the two adjacent files.
 // A pawn one rank ahead is best, two ranks ahead is still something, and a
-// file with no friendly pawn at all is an open attack lane. The caller
-// scales this by game phase: shelter means nothing in a pawn ending.
-int Evaluator::kingShelterScore(const Board& board, Color color) const {
+// file with no friendly pawn at all is an open attack lane. These terms are
+// middlegame-only by default (eg = 0): shelter means nothing in a pawn ending.
+template <typename Sink>
+void Evaluator::walkKingShelter(const Board& board, Color color, int sign, Sink& sink) const {
     uint64_t king = board.pieceBB(color, Board::KING);
-    if (!king) return 0;
+    if (!king) return;
 
     int kingSquare = std::countr_zero(king);
     int kingFile = kingSquare % 8;
@@ -223,12 +242,10 @@ int Evaluator::kingShelterScore(const Board& board, Color color) const {
     int forward = (color == Color::WHITE ? 1 : -1);
     uint64_t ownPawns = board.pieceBB(color, Board::PAWN);
 
-    int score = 0;
-
     for (int file = std::max(0, kingFile - 1); file <= std::min(7, kingFile + 1); ++file) {
         uint64_t pawnsOnFile = ownPawns & fileMask(file);
         if (!pawnsOnFile) {
-            score -= kingOpenFilePenalty;
+            sink.add(EvalParam::KING_OPEN_FILE, sign);
             continue;
         }
 
@@ -236,13 +253,11 @@ int Evaluator::kingShelterScore(const Board& board, Color color) const {
         int farRank = kingRank + 2 * forward;
 
         if (closeRank >= 0 && closeRank < 8 && (pawnsOnFile & (1ULL << (closeRank * 8 + file)))) {
-            score += shelterCloseBonus;
+            sink.add(EvalParam::SHELTER_CLOSE, sign);
         } else if (farRank >= 0 && farRank < 8 && (pawnsOnFile & (1ULL << (farRank * 8 + file)))) {
-            score += shelterFarBonus;
+            sink.add(EvalParam::SHELTER_FAR, sign);
         }
     }
-
-    return score;
 }
 
 int Evaluator::evaluateTerminal(const Board& board, const Color side_to_move) {
@@ -250,65 +265,21 @@ int Evaluator::evaluateTerminal(const Board& board, const Color side_to_move) {
     return 0;
 }
 
-int Evaluator::evaluateMaterial(const Board& board) const {
-    auto countSetBits = [](const uint64_t bits) {return __builtin_popcountll(bits);};
-
-    int score = 0;
-    for (int pt = 0; pt < PST_COUNT; ++pt) {
-        const int whiteCount = countSetBits(board.pieceBB(Color::WHITE, static_cast<Board::PieceIndex>(pt)));
-        const int blackCount = countSetBits(board.pieceBB(Color::BLACK, static_cast<Board::PieceIndex>(pt)));
-
-        score += pieceValues[pt] * (whiteCount - blackCount);
-    }
-    return score;
-}
-
-int Evaluator::evaluatePositional(const Board& board) const {
-    int score = 0;
-
-    auto applyPST = [&](uint64_t bitboard, const std::array<int, 64>& table, const int sign) {
-        while (bitboard) {
-            int square = __builtin_ctzll(bitboard);
-            score += sign * table[square];
-            bitboard &= bitboard - 1;
-        }
-    };
-
-    applyPST(board.pieceBB(Color::WHITE, Board::PAWN), whitePawnTable, 1);
-    applyPST(board.pieceBB(Color::WHITE, Board::KNIGHT), whiteKnightTable, 1);
-    applyPST(board.pieceBB(Color::WHITE, Board::BISHOP), whiteBishopTable, 1);
-    applyPST(board.pieceBB(Color::WHITE, Board::ROOK), whiteRookTable, 1);
-    applyPST(board.pieceBB(Color::WHITE, Board::QUEEN), whiteQueenTable, 1);
-    applyPST(board.pieceBB(Color::WHITE, Board::KING), whiteKingTableMG, 1);
-
-    applyPST(board.pieceBB(Color::BLACK, Board::PAWN), blackPawnTable, -1);
-    applyPST(board.pieceBB(Color::BLACK, Board::KNIGHT), blackKnightTable, -1);
-    applyPST(board.pieceBB(Color::BLACK, Board::BISHOP), blackBishopTable, -1);
-    applyPST(board.pieceBB(Color::BLACK, Board::ROOK), blackRookTable, -1);
-    applyPST(board.pieceBB(Color::BLACK, Board::QUEEN), blackQueenTable, -1);
-    applyPST(board.pieceBB(Color::BLACK, Board::KING), blackKingTableMG, -1);
-
-    return score;
-}
-
-void Evaluator::initializePieceSquareTables() {
-    // -----------------------------------------------------------
-    // 1. AGGRESSIVE PAWN TABLE
-    // Logic: Rank 2 is 0. Rank 4 (center) is highly rewarded.
-    // Rank 7 is massive (promotion threat).
-    // -----------------------------------------------------------
-    whitePawnTable = {
+void Evaluator::initializeDefaults() {
+    // All tables are indexed square 0 = a1, so the FIRST source row is rank 1.
+    // Hand-written values; doc 04 replaces them with tuned ones. Except for
+    // the king, middlegame and endgame start out equal.
+    static constexpr int pawn[64] = {
         0, 0, 0, 0, 0, 0, 0, 0,
         5, 10, 10, -20, -20, 10, 10, 5,
         5, -5, 0, 5, 5, 0, -5, 5,
-        0, 0, 10, 40, 40, 10, 0, 0, // Rank 4: +40 for e4/d4 (was 20)
-        5, 5, 20, 60, 60, 20, 5, 5, // Rank 5: +60 for e5/d5
-        10, 10, 30, 80, 80, 30, 10, 10, // Rank 6: Crushing
+        0, 0, 10, 40, 40, 10, 0, 0,
+        5, 5, 20, 60, 60, 20, 5, 5,
+        10, 10, 30, 80, 80, 30, 10, 10,
         50, 50, 50, 50, 50, 50, 50, 50,
         0, 0, 0, 0, 0, 0, 0, 0
     };
-
-    whiteKnightTable = {
+    static constexpr int knight[64] = {
         -50, -40, -30, -30, -30, -30, -40, -50,
         -40, -20, 0, 0, 0, 0, -20, -40,
         -30, 0, 10, 15, 15, 10, 0, -30,
@@ -318,8 +289,7 @@ void Evaluator::initializePieceSquareTables() {
         -40, -20, 0, 5, 5, 0, -20, -40,
         -50, -40, -30, -30, -30, -30, -40, -50
     };
-
-    whiteBishopTable = {
+    static constexpr int bishop[64] = {
         -20, -10, -10, -10, -10, -10, -10, -20,
         -10, 0, 0, 0, 0, 0, 0, -10,
         -10, 0, 5, 10, 10, 5, 0, -10,
@@ -329,12 +299,7 @@ void Evaluator::initializePieceSquareTables() {
         -10, 5, 0, 0, 0, 0, 5, -10,
         -20, -10, -10, -10, -10, -10, -10, -20
     };
-
-    // All tables are indexed square 0 = a1, so the FIRST source row is rank 1.
-    // (The rook and king tables used to be pasted rank-8-first, which
-    // inverted them: rooks were drawn to rank 2 instead of the 7th, and the
-    // king was rewarded for marching up the board instead of castling.)
-    whiteRookTable = {
+    static constexpr int rook[64] = {
         0, 0, 0, 5, 5, 0, 0, 0,          // rank 1: centralized castled rook
         -5, 0, 0, 0, 0, 0, 0, -5,
         -5, 0, 0, 0, 0, 0, 0, -5,
@@ -344,8 +309,7 @@ void Evaluator::initializePieceSquareTables() {
         5, 10, 10, 10, 10, 10, 10, 5,    // rank 7: rook on the seventh
         0, 0, 0, 0, 0, 0, 0, 0
     };
-
-    whiteQueenTable = {
+    static constexpr int queen[64] = {
         -20, -10, -10, -5, -5, -10, -10, -20,
         -10, 0, 0, 0, 0, 0, 0, -10,
         -10, 0, 5, 5, 5, 5, 0, -10,
@@ -355,9 +319,8 @@ void Evaluator::initializePieceSquareTables() {
         -10, 0, 5, 0, 0, 0, 0, -10,
         -20, -10, -10, -5, -5, -10, -10, -20
     };
-
     // Middlegame: stay castled behind the pawns; the center is dangerous.
-    whiteKingTableMG = {
+    static constexpr int kingMG[64] = {
         20, 30, 10, 0, 0, 10, 30, 20,    // rank 1: castled corners are safest
         20, 20, 0, 0, 0, 0, 20, 20,
         -10, -20, -20, -20, -20, -20, -20, -10,
@@ -367,9 +330,8 @@ void Evaluator::initializePieceSquareTables() {
         -30, -40, -40, -50, -50, -40, -40, -30,
         -30, -40, -40, -50, -50, -40, -40, -30
     };
-
     // Endgame: the king is a fighting piece — centralize it.
-    whiteKingTableEG = {
+    static constexpr int kingEG[64] = {
         -50, -30, -30, -30, -30, -30, -30, -50,
         -30, -30, 0, 0, 0, 0, -30, -30,
         -30, -10, 20, 30, 30, 20, -10, -30,
@@ -380,96 +342,103 @@ void Evaluator::initializePieceSquareTables() {
         -50, -40, -30, -20, -20, -30, -40, -50
     };
 
-    updateBlackTables();
+    auto both = [](int v) { return EvalScore{v, v}; };
+    using namespace EvalParam;
+
+    const int material[5] = {100, 320, 330, 500, 900};
+    for (int p = 0; p < 5; ++p) params[MATERIAL + p] = both(material[p]);
+
+    const int* tables[5] = {pawn, knight, bishop, rook, queen};
+    for (int p = 0; p < 5; ++p)
+        for (int sq = 0; sq < 64; ++sq) params[PST + p * 64 + sq] = both(tables[p][sq]);
+    for (int sq = 0; sq < 64; ++sq) params[PST + Board::KING * 64 + sq] = {kingMG[sq], kingEG[sq]};
+
+    const int passed[8] = {0, 10, 15, 25, 40, 65, 100, 0};
+    for (int r = 0; r < 8; ++r) params[PASSED_PAWN + r] = both(passed[r]);
+
+    params[DOUBLED_PAWN] = both(-12);
+    params[ISOLATED_PAWN] = both(-10);
+    params[BISHOP_PAIR] = both(30);
+    params[ROOK_OPEN_FILE] = both(20);
+    params[ROOK_SEMI_OPEN_FILE] = both(10);
+    const int mobility[4] = {4, 3, 2, 1};
+    for (int p = 0; p < 4; ++p) params[MOBILITY + p] = both(mobility[p]);
+    params[SHELTER_CLOSE] = {10, 0};
+    params[SHELTER_FAR] = {5, 0};
+    params[KING_OPEN_FILE] = {-15, 0};
+    params[TEMPO] = {0, 0};
+
+    rebuildPieceSquare();
 }
 
-// Parameter layout for Texel-style tuning:
-//   [0..5]      piece values
-//   [6..389]    6 PSTs of 64 squares (P, N, B, R, Q, K_MG)
-//   [390..401]  scalar heuristic weights (see scalarParams below)
-//   [402..409]  passed-pawn bonus by relative rank
+void Evaluator::rebuildPieceSquare() {
+    using namespace EvalParam;
+    for (int piece = 0; piece < 6; ++piece) {
+        const EvalScore material = (piece < Board::KING) ? params[MATERIAL + piece] : EvalScore{};
+        for (int sq = 0; sq < 64; ++sq) {
+            const EvalScore w = params[PST + piece * 64 + sq];
+            const EvalScore b = params[PST + piece * 64 + (sq ^ 56)];
+            pieceSquare[0][piece][sq] = {material.mg + w.mg, material.eg + w.eg};
+            pieceSquare[1][piece][sq] = {-(material.mg + b.mg), -(material.eg + b.eg)};
+        }
+    }
+}
+
 int Evaluator::getParameterCount() const {
-    return 6 + 6 * 64 + SCALAR_PARAM_COUNT + 8;
-}
-
-// The scalar heuristic weights in a fixed order shared by get/setParameter.
-static constexpr int SCALAR_PARAM_COUNT_CHECK = 12;
-int* Evaluator::scalarParams(int index) {
-    int* params[SCALAR_PARAM_COUNT] = {
-        &doubledPawnPenalty, &isolatedPawnPenalty, &bishopPairBonus,
-        &rookOpenFileBonus, &rookSemiOpenFileBonus,
-        &mobilityWeights[0], &mobilityWeights[1], &mobilityWeights[2], &mobilityWeights[3],
-        &shelterCloseBonus, &shelterFarBonus, &kingOpenFilePenalty,
-    };
-    static_assert(SCALAR_PARAM_COUNT == SCALAR_PARAM_COUNT_CHECK, "keep layout comment in sync");
-    return (index >= 0 && index < SCALAR_PARAM_COUNT) ? params[index] : nullptr;
+    return 2 * EvalParam::COUNT;
 }
 
 int Evaluator::getParameter(int index) const {
-    if (index < 6) return pieceValues[index];
-    index -= 6;
-    if (index < 64) return whitePawnTable[index];
-    index -= 64;
-    if (index < 64) return whiteKnightTable[index];
-    index -= 64;
-    if (index < 64) return whiteBishopTable[index];
-    index -= 64;
-    if (index < 64) return whiteRookTable[index];
-    index -= 64;
-    if (index < 64) return whiteQueenTable[index];
-    index -= 64;
-    if (index < 64) return whiteKingTableMG[index];
-    index -= 64;
-    if (index < SCALAR_PARAM_COUNT) {
-        return *const_cast<Evaluator*>(this)->scalarParams(index);
-    }
-    index -= SCALAR_PARAM_COUNT;
-    if (index < 8) return passedPawnBonus[index];
-    return 0;
+    if (index < 0 || index >= getParameterCount()) return 0;
+    const EvalScore& s = params[index / 2];
+    return (index % 2 == 0) ? s.mg : s.eg;
 }
 
-// used for perf testing and tuning
 void Evaluator::setParameter(int index, int value) {
-    if (index < 6) { pieceValues[index] = value; return; }
-    index -= 6;
-    if (index < 64) { whitePawnTable[index] = value; return; }
-    index -= 64;
-    if (index < 64) { whiteKnightTable[index] = value; return; }
-    index -= 64;
-    if (index < 64) { whiteBishopTable[index] = value; return; }
-    index -= 64;
-    if (index < 64) { whiteRookTable[index] = value; return; }
-    index -= 64;
-    if (index < 64) { whiteQueenTable[index] = value; return; }
-    index -= 64;
-    if (index < 64) { whiteKingTableMG[index] = value; return; }
-    index -= 64;
-    if (index < SCALAR_PARAM_COUNT) { *scalarParams(index) = value; return; }
-    index -= SCALAR_PARAM_COUNT;
-    if (index < 8) { passedPawnBonus[index] = value; return; }
+    if (index < 0 || index >= getParameterCount()) return;
+    EvalScore& s = params[index / 2];
+    if (index % 2 == 0) s.mg = value; else s.eg = value;
+    if (index / 2 < EvalParam::PASSED_PAWN) rebuildPieceSquare();   // material or PST
 }
 
-bool Evaluator::loadParametersFromFile(const std::string& path) {
+std::string Evaluator::paramsFileHeader() {
+    return "# jewkiebot-eval v2 " + std::to_string(2 * EvalParam::COUNT);
+}
+
+bool Evaluator::loadParametersFromFile(const std::string& path, std::string* error) {
+    auto fail = [&](const std::string& why) {
+        if (error) *error = why;
+        return false;
+    };
+
     std::ifstream f(path);
-    if (!f) return false;
+    if (!f) return fail("cannot open file");
+
+    std::string header;
+    while (std::getline(f, header)) {
+        while (!header.empty() && (header.back() == '\r' || header.back() == ' ')) header.pop_back();
+        if (!header.empty()) break;
+    }
+    if (header != paramsFileHeader())
+        return fail("eval params version mismatch (expected \"" + paramsFileHeader() + "\"), using defaults");
 
     const int count = getParameterCount();
-    int index = 0;
+    std::vector<int> values;
+    values.reserve(count);
     int value;
-    // Tolerant of any whitespace layout (one per line, or space-separated).
-    // Extra values past the known count are ignored; a short file applies its
-    // prefix and leaves the rest at their current values.
-    while (index < count && (f >> value)) {
-        setParameter(index, value);
-        ++index;
-    }
+    while (static_cast<int>(values.size()) < count && (f >> value)) values.push_back(value);
+    if (static_cast<int>(values.size()) != count)
+        return fail("expected " + std::to_string(count) + " values, read " + std::to_string(values.size()));
 
-    updateBlackTables();  // rebuild mirrored black + combined tables from the new values
-    return index > 0;
+    std::string rest;
+    if (f >> rest) return fail("unexpected data after " + std::to_string(count) + " values");
+
+    for (int i = 0; i < count; ++i) setParameter(i, values[i]);
+    return true;
 }
 
 std::string Evaluator::exportParameters() const {
-    std::string out;
+    std::string out = paramsFileHeader() + "\n";
     const int count = getParameterCount();
     for (int i = 0; i < count; ++i) {
         out += std::to_string(getParameter(i));
@@ -516,8 +485,7 @@ bool Evaluator::tuneFromDataset(const std::string& datasetPath, const std::strin
     auto mse = [&]() {
         double total = 0.0;
         for (const auto& e : dataset) {
-            int ev = evaluate(e.board, e.board.sideToMove());
-            if (e.board.sideToMove() == Color::BLACK) ev = -ev;  // to White's perspective
+            int ev = evaluate(e.board, Color::WHITE);
             double diff = e.result - tuneSigmoid(static_cast<double>(ev));
             total += diff * diff;
         }
@@ -533,19 +501,19 @@ bool Evaluator::tuneFromDataset(const std::string& datasetPath, const std::strin
         for (int p = 0; p < count; ++p) {
             const int orig = getParameter(p);
 
-            setParameter(p, orig + 1); updateBlackTables();
+            setParameter(p, orig + 1);
             const double plus = mse();
-            setParameter(p, orig - 1); updateBlackTables();
+            setParameter(p, orig - 1);
             const double minus = mse();
 
             if (plus < best && plus <= minus) {
-                setParameter(p, orig + 1); updateBlackTables();
+                setParameter(p, orig + 1);
                 best = plus; improved = true;
             } else if (minus < best) {
-                setParameter(p, orig - 1); updateBlackTables();
+                setParameter(p, orig - 1);
                 best = minus; improved = true;
             } else {
-                setParameter(p, orig); updateBlackTables();  // restore
+                setParameter(p, orig);  // restore
             }
         }
         if (onEpoch) onEpoch(epoch, best);
@@ -554,38 +522,6 @@ bool Evaluator::tuneFromDataset(const std::string& datasetPath, const std::strin
 
     std::ofstream out(outputPath);
     if (!out.is_open()) return false;
-    for (int i = 0; i < count; ++i) out << getParameter(i) << "\n";
+    out << exportParameters();
     return true;
-}
-
-void Evaluator::updateBlackTables() {
-    auto mirror = [](const std::array<int, 64>& white, std::array<int, 64>& black) {
-        for (int i = 0; i < 64; ++i) {
-            black[i] = white[i ^ 56];
-        }
-    };
-
-    mirror(whitePawnTable, blackPawnTable);
-    mirror(whiteKnightTable, blackKnightTable);
-    mirror(whiteBishopTable, blackBishopTable);
-    mirror(whiteRookTable, blackRookTable);
-    mirror(whiteQueenTable, blackQueenTable);
-    mirror(whiteKingTableMG, blackKingTableMG);
-    mirror(whiteKingTableEG, blackKingTableEG);
-
-    const std::array<int, 64>* whiteTables[PST_COUNT] = {
-        &whitePawnTable, &whiteKnightTable, &whiteBishopTable,
-        &whiteRookTable, &whiteQueenTable, &whiteKingTableMG
-    };
-    const std::array<int, 64>* blackTables[PST_COUNT] = {
-        &blackPawnTable, &blackKnightTable, &blackBishopTable,
-        &blackRookTable, &blackQueenTable, &blackKingTableMG
-    };
-
-    for (int pieceIndex = 0; pieceIndex < PST_COUNT; ++pieceIndex) {
-        for (int squareIndex = 0; squareIndex < 64; ++squareIndex) {
-            combinedTables[0][pieceIndex][squareIndex] = pieceValues[pieceIndex] + (*whiteTables[pieceIndex])[squareIndex];
-            combinedTables[1][pieceIndex][squareIndex] = pieceValues[pieceIndex] + (*blackTables[pieceIndex])[squareIndex];
-        }
-    }
 }

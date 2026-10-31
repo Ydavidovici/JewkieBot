@@ -116,24 +116,19 @@ int main(int argc, char** argv) {
             int originalValue = evaluator.getParameter(p);
             
             evaluator.setParameter(p, originalValue + 1);
-            evaluator.updateBlackTables();
             double msePlus = calculateMSE(evaluator, dataset);
 
             evaluator.setParameter(p, originalValue - 1);
-            evaluator.updateBlackTables();
             double mseMinus = calculateMSE(evaluator, dataset);
 
             evaluator.setParameter(p, originalValue);
-            evaluator.updateBlackTables();
 
             if (msePlus < bestMSE && msePlus <= mseMinus) {
                 evaluator.setParameter(p, originalValue + 1);
-                evaluator.updateBlackTables();
                 bestMSE = msePlus;
                 improved = true;
             } else if (mseMinus < bestMSE && mseMinus < msePlus) {
                 evaluator.setParameter(p, originalValue - 1);
-                evaluator.updateBlackTables();
                 bestMSE = mseMinus;
                 improved = true;
             }

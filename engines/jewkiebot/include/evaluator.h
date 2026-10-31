@@ -1,93 +1,104 @@
 #pragma once
 
 #include "board.h"
+#include <array>
 #include <vector>
 #include <cstdint>
 #include <string>
 #include <functional>
 
+// A middlegame/endgame pair. evaluate() sums both halves over every term and
+// blends them by game phase: (mg * phase + eg * (24 - phase)) / 24.
+struct EvalScore {
+    int mg = 0;
+    int eg = 0;
+};
+
+// Index layout of the evaluation parameters (Evaluator::params). Every
+// parameter is an EvalScore, from White's point of view; Black's terms use
+// the same parameters with the board mirrored (PST square ^ 56) and the sign
+// flipped. Penalties are stored as negative values and added.
+namespace EvalParam {
+    enum : int {
+        MATERIAL = 0,                              // P, N, B, R, Q (the king is a constant)
+        PST = MATERIAL + 5,                        // 6 pieces x 64 squares, square 0 = a1
+        PASSED_PAWN = PST + 6 * 64,                // by relative rank 0..7
+        DOUBLED_PAWN = PASSED_PAWN + 8,            // per extra pawn on a file
+        ISOLATED_PAWN,
+        BISHOP_PAIR,
+        ROOK_OPEN_FILE,
+        ROOK_SEMI_OPEN_FILE,
+        MOBILITY,                                  // N, B, R, Q: per reachable square
+        SHELTER_CLOSE = MOBILITY + 4,              // own pawn directly in front of the king
+        SHELTER_FAR,                               // own pawn two ranks in front
+        KING_OPEN_FILE,                            // no own pawn on/next to the king's file
+        TEMPO,                                     // side to move
+        COUNT
+    };
+}
+
 class Evaluator {
 public:
-    static constexpr int PST_COUNT = 6;
+    static constexpr int PHASE_MAX = 24;           // N=1, B=1, R=2, Q=4 per piece
+    static constexpr int KING_VALUE = 20000;       // not tuned: both kings are always on
 
     Evaluator();
 
     int evaluate(const Board& board, Color side_to_move) const;
     static int evaluateTerminal(const Board& board, Color side_to_move);
+    static int gamePhase(const Board& board);
 
-    // For Texel Tuning
+    // The parameters each term of the evaluation uses in this position, as
+    // (EvalParam index, White count minus Black count) pairs, plus the phase.
+    // evaluate() equals sum(count * param), tapered (up to rounding), so a
+    // tuner can evaluate and differentiate positions without the board.
+    struct Trace {
+        std::vector<std::pair<int16_t, int16_t>> terms;
+        int phase = 0;
+        int kings = 0;     // white kings minus black kings (KING_VALUE each)
+    };
+    Trace trace(const Board& board) const;
+
+    // Flat integer view of the parameters for tuning and the params file:
+    // index 2 * p is params[p].mg, 2 * p + 1 is params[p].eg.
     int getParameterCount() const;
     int getParameter(int index) const;
     void setParameter(int index, int value);
-    void updateBlackTables();
 
-    // Apply a tuned parameter vector from a text file (whitespace-separated
-    // integers, in getParameter index order) and rebuild the derived tables.
-    // Returns false if the file can't be opened or held no values.
-    bool loadParametersFromFile(const std::string& path);
+    // Params file: a header line "# jewkiebot-eval v2 <count>" followed by
+    // getParameterCount() integers in getParameter order. A file with a
+    // missing or different header, or the wrong number of values, is refused
+    // and the current values are kept (an old layout would load garbage).
+    static std::string paramsFileHeader();
+    bool loadParametersFromFile(const std::string& path, std::string* error = nullptr);
+    std::string exportParameters() const;   // header line + one value per line
 
-    // Dump the current parameters as one integer per line (getParameter order),
-    // so a caller can read back defaults / what's currently applied.
-    std::string exportParameters() const;
-
-    // Texel coordinate-descent tuning against an EPD dataset (each line a FEN
-    // followed by c9 "<result>", result in {1.0,0.5,0.0} or PGN tokens). Mutates
-    // this evaluator toward the params that minimise sigmoid MSE, writes them as
-    // a raw one-per-line vector to outputPath, and calls onEpoch(epoch, mse) each
-    // pass (epoch 0 = initial). Returns false on a missing/empty dataset or write
+    // Texel tuning against an EPD dataset (each line a FEN followed by
+    // c9 "<result>", result in {1.0,0.5,0.0} or PGN tokens). Mutates this
+    // evaluator toward the params that minimise sigmoid MSE, writes them to
+    // outputPath (params-file format), and calls onEpoch(epoch, mse) each pass
+    // (epoch 0 = initial). Returns false on a missing/empty dataset or write
     // failure. Stops early when an epoch yields no improvement.
     bool tuneFromDataset(const std::string& datasetPath, const std::string& outputPath,
                          int maxEpochs, const std::function<void(int, double)>& onEpoch);
 
 private:
-    int evaluateMaterial(const Board& board) const;
-    int evaluatePositional(const Board& board) const;
+    std::array<EvalScore, EvalParam::COUNT> params{};
 
-    static constexpr int SCALAR_PARAM_COUNT = 12;
-    int* scalarParams(int index);
+    // Material + PST fused per [color][piece][square] (Black's entries mirrored
+    // and negated), so evaluate() does one lookup per piece. Rebuilt whenever
+    // a material or PST parameter changes; trace() reads params directly, and
+    // eval_params_test checks the two agree.
+    EvalScore pieceSquare[2][6][64]{};
+    void rebuildPieceSquare();
 
-    // Structural/activity heuristics, each scored for one color; evaluate()
-    // takes white's total minus black's.
-    int pawnStructureScore(const Board& board, Color color) const;
-    int pieceActivityScore(const Board& board, Color color) const;
-    int kingShelterScore(const Board& board, Color color) const;
+    // Visits every term of the evaluation, calling sink.add(param, count)
+    // with White-minus-Black counts. evaluate() and trace() both run it, so
+    // the tuner always sees exactly the evaluation the search uses.
+    template <typename Sink> void walkTerms(const Board& board, Sink& sink) const;
+    template <typename Sink> void walkPawnStructure(const Board& board, Color color, int sign, Sink& sink) const;
+    template <typename Sink> void walkPieceActivity(const Board& board, Color color, int sign, Sink& sink) const;
+    template <typename Sink> void walkKingShelter(const Board& board, Color color, int sign, Sink& sink) const;
 
-    // Heuristic weights in centipawns. Penalties are stored positive and
-    // subtracted where applied. All are exposed through getParameter/
-    // setParameter (after the PSTs) so Texel-style tuning against the game
-    // database can adjust them.
-    int doubledPawnPenalty = 12;
-    int isolatedPawnPenalty = 10;
-    int bishopPairBonus = 30;
-    int rookOpenFileBonus = 20;
-    int rookSemiOpenFileBonus = 10;
-    int mobilityWeights[4] = {4, 3, 2, 1};  // knight, bishop, rook, queen — per reachable square
-    int shelterCloseBonus = 10;             // friendly pawn directly in front of the king
-    int shelterFarBonus = 5;                // friendly pawn two ranks in front
-    int kingOpenFilePenalty = 15;           // no friendly pawn at all on/next to the king's file
-    int passedPawnBonus[8] = {0, 10, 15, 25, 40, 65, 100, 0};  // by relative rank
-
-    int pieceValues[PST_COUNT] = {100, 320, 330, 500, 900, 20000};
-
-    std::array<int, 64> whitePawnTable{};
-    std::array<int, 64> whiteKnightTable{};
-    std::array<int, 64> whiteBishopTable{};
-    std::array<int, 64> whiteRookTable{};
-    std::array<int, 64> whiteQueenTable{};
-    std::array<int, 64> whiteKingTableMG{};
-    std::array<int, 64> whiteKingTableEG{};
-
-    std::array<int, 64> blackPawnTable{};
-    std::array<int, 64> blackKnightTable{};
-    std::array<int, 64> blackBishopTable{};
-    std::array<int, 64> blackRookTable{};
-    std::array<int, 64> blackQueenTable{};
-    std::array<int, 64> blackKingTableMG{};
-    std::array<int, 64> blackKingTableEG{};
-
-    // pieceValues[p] + PST[sq], precombined by updateBlackTables() so
-    // evaluate() does a single lookup per piece. [0]=white, [1]=black.
-    int combinedTables[2][PST_COUNT][64]{};
-
-    void initializePieceSquareTables();
+    void initializeDefaults();
 };

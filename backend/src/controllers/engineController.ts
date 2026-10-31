@@ -5,6 +5,7 @@ import {GameAnalyzer} from "../gameAnalyzer";
 import path from "node:path";
 import {mkdir, writeFile, unlink} from "node:fs/promises";
 import {existsSync} from "node:fs";
+import {formatEvalParams, parseEvalParams} from "../evalParams.ts";
 
 export class EngineController {
     constructor(
@@ -70,7 +71,7 @@ export class EngineController {
 
             let {params} = req.body ?? {};
             if (typeof params === "string") {
-                params = params.split(/\s+/).filter(Boolean).map(Number);
+                params = parseEvalParams(params);
             }
             if (!Array.isArray(params) || params.length === 0 || params.some((n: any) => !Number.isFinite(n))) {
                 return res.status(400).json({error: "params must be a non-empty array of integers (or a whitespace-separated string)"});
@@ -86,7 +87,7 @@ export class EngineController {
             }
 
             await mkdir(path.dirname(paramsPath), {recursive: true});
-            await writeFile(paramsPath, params.map((n: number) => Math.round(n)).join("\n") + "\n");
+            await writeFile(paramsPath, formatEvalParams(params));
 
             // Live-apply to the managed engine so it takes effect without a respawn.
             let liveApplied = false;

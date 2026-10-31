@@ -143,11 +143,12 @@ static void handle_setoption(const std::string& line, Engine& engine) {
             // reference — quiesce any search first, like Hash.
             engine.stopSearch();
             engine.waitSearch();
-            if (engine.loadEvalParams(value)) {
+            std::string error;
+            if (engine.loadEvalParams(value, &error)) {
                 std::cout << "info string eval params loaded (" << engine.evalParamCount()
                           << " params) from " << value << "\n";
             } else {
-                std::cout << "info string failed to load eval params: " << value << "\n";
+                std::cout << "info string failed to load eval params: " << value << " (" << error << ")\n";
             }
         }
     } else if (name == "OwnBook") {
@@ -271,7 +272,8 @@ static void handle_evalparams(const std::string& line, Engine& engine) {
     std::string value;
     int index = 0;
     while (std::getline(iss, value)) {
-        if (!value.empty()) std::cout << "evalparam " << index++ << " " << value << "\n";
+        if (value.empty() || value[0] == '#') continue;  // the params-file header
+        std::cout << "evalparam " << index++ << " " << value << "\n";
     }
     std::cout << "evalparamsok\n";
     std::cout.flush();

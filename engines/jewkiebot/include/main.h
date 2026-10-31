@@ -54,7 +54,7 @@ public:
 
     // Tuned evaluation parameters. Only call between searches — mutating the
     // evaluator (shared by reference with the searcher) mid-search is unsafe.
-    bool loadEvalParams(const std::string& path) { return evaluator.loadParametersFromFile(path); }
+    bool loadEvalParams(const std::string& path, std::string* error = nullptr) { return evaluator.loadParametersFromFile(path, error); }
     std::string exportEvalParams() const { return evaluator.exportParameters(); }
     int evalParamCount() const { return evaluator.getParameterCount(); }
 

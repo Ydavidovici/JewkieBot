@@ -1,6 +1,7 @@
 import {spawn} from "bun";
 import path from "node:path";
 import {mkdir, writeFile} from "node:fs/promises";
+import {formatEvalParams, parseEvalParams} from "../evalParams.ts";
 import {
     sshTargetFromEnv,
     sshArgs,
@@ -186,13 +187,13 @@ export class TuningController {
         // 4. Pull the optimized params, persist, and live-apply.
         this.state.phase = "applying";
         const {stdout} = await this._ssh(target, `cat ${JSON.stringify(remoteOut)}`);
-        const params = stdout.split(/\s+/).filter(Boolean).map(Number);
+        const params = parseEvalParams(stdout);
         if (params.length === 0 || params.some((n) => !Number.isFinite(n))) {
             throw new Error("Tuner produced no valid parameters");
         }
 
         await mkdir(path.dirname(this.evalParamsPath), {recursive: true});
-        await writeFile(this.evalParamsPath, params.map((n) => Math.round(n)).join("\n") + "\n");
+        await writeFile(this.evalParamsPath, formatEvalParams(params));
 
         try {
             const main = this.engineManager.getEngine("Main");
