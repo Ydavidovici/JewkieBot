@@ -291,7 +291,7 @@ static void handle_tune(const std::string& line, Engine& engine) {
     }
     const std::string dataset = tokens[1];
     const std::string output = tokens[2];
-    int maxEpochs = 100;
+    int maxEpochs = 3000;   // Adam steps; each is one pass over the dataset
     if (tokens.size() > 3) { try { maxEpochs = std::stoi(tokens[3]); } catch (...) {} }
 
     engine.stopSearch();

@@ -23,7 +23,7 @@ set(ENGINE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_library(board STATIC src/board.cpp src/perft.cpp)
 add_library(move STATIC src/move.cpp)
-add_library(evaluator STATIC src/evaluator.cpp)
+add_library(evaluator STATIC src/evaluator.cpp src/tuner.cpp)
 add_library(transposition_table STATIC src/transpositionTable.cpp)
 add_library(search STATIC src/search.cpp src/timeManager.cpp)
 add_library(book STATIC src/book.cpp)

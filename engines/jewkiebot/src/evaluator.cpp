@@ -1,4 +1,5 @@
 #include "evaluator.h"
+#include "evalDefaults.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -266,108 +267,9 @@ int Evaluator::evaluateTerminal(const Board& board, const Color side_to_move) {
 }
 
 void Evaluator::initializeDefaults() {
-    // All tables are indexed square 0 = a1, so the FIRST source row is rank 1.
-    // Hand-written values; doc 04 replaces them with tuned ones. Except for
-    // the king, middlegame and endgame start out equal.
-    static constexpr int pawn[64] = {
-        0, 0, 0, 0, 0, 0, 0, 0,
-        5, 10, 10, -20, -20, 10, 10, 5,
-        5, -5, 0, 5, 5, 0, -5, 5,
-        0, 0, 10, 40, 40, 10, 0, 0,
-        5, 5, 20, 60, 60, 20, 5, 5,
-        10, 10, 30, 80, 80, 30, 10, 10,
-        50, 50, 50, 50, 50, 50, 50, 50,
-        0, 0, 0, 0, 0, 0, 0, 0
-    };
-    static constexpr int knight[64] = {
-        -50, -40, -30, -30, -30, -30, -40, -50,
-        -40, -20, 0, 0, 0, 0, -20, -40,
-        -30, 0, 10, 15, 15, 10, 0, -30,
-        -30, 5, 15, 20, 20, 15, 5, -30,
-        -30, 0, 15, 20, 20, 15, 0, -30,
-        -30, 5, 10, 15, 15, 10, 5, -30,
-        -40, -20, 0, 5, 5, 0, -20, -40,
-        -50, -40, -30, -30, -30, -30, -40, -50
-    };
-    static constexpr int bishop[64] = {
-        -20, -10, -10, -10, -10, -10, -10, -20,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -10, 0, 5, 10, 10, 5, 0, -10,
-        -10, 5, 5, 10, 10, 5, 5, -10,
-        -10, 0, 10, 10, 10, 10, 0, -10,
-        -10, 10, 10, 10, 10, 10, 10, -10,
-        -10, 5, 0, 0, 0, 0, 5, -10,
-        -20, -10, -10, -10, -10, -10, -10, -20
-    };
-    static constexpr int rook[64] = {
-        0, 0, 0, 5, 5, 0, 0, 0,          // rank 1: centralized castled rook
-        -5, 0, 0, 0, 0, 0, 0, -5,
-        -5, 0, 0, 0, 0, 0, 0, -5,
-        -5, 0, 0, 0, 0, 0, 0, -5,
-        -5, 0, 0, 0, 0, 0, 0, -5,
-        -5, 0, 0, 0, 0, 0, 0, -5,
-        5, 10, 10, 10, 10, 10, 10, 5,    // rank 7: rook on the seventh
-        0, 0, 0, 0, 0, 0, 0, 0
-    };
-    static constexpr int queen[64] = {
-        -20, -10, -10, -5, -5, -10, -10, -20,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -10, 0, 5, 5, 5, 5, 0, -10,
-        -5, 0, 5, 5, 5, 5, 0, -5,
-        0, 0, 5, 5, 5, 5, 0, -5,
-        -10, 5, 5, 5, 5, 5, 0, -10,
-        -10, 0, 5, 0, 0, 0, 0, -10,
-        -20, -10, -10, -5, -5, -10, -10, -20
-    };
-    // Middlegame: stay castled behind the pawns; the center is dangerous.
-    static constexpr int kingMG[64] = {
-        20, 30, 10, 0, 0, 10, 30, 20,    // rank 1: castled corners are safest
-        20, 20, 0, 0, 0, 0, 20, 20,
-        -10, -20, -20, -20, -20, -20, -20, -10,
-        -20, -30, -30, -40, -40, -30, -30, -20,
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30, -40, -40, -50, -50, -40, -40, -30,
-        -30, -40, -40, -50, -50, -40, -40, -30
-    };
-    // Endgame: the king is a fighting piece — centralize it.
-    static constexpr int kingEG[64] = {
-        -50, -30, -30, -30, -30, -30, -30, -50,
-        -30, -30, 0, 0, 0, 0, -30, -30,
-        -30, -10, 20, 30, 30, 20, -10, -30,
-        -30, -10, 30, 40, 40, 30, -10, -30,
-        -30, -10, 30, 40, 40, 30, -10, -30,
-        -30, -10, 20, 30, 30, 20, -10, -30,
-        -30, -20, -10, 0, 0, -10, -20, -30,
-        -50, -40, -30, -20, -20, -30, -40, -50
-    };
-
-    auto both = [](int v) { return EvalScore{v, v}; };
-    using namespace EvalParam;
-
-    const int material[5] = {100, 320, 330, 500, 900};
-    for (int p = 0; p < 5; ++p) params[MATERIAL + p] = both(material[p]);
-
-    const int* tables[5] = {pawn, knight, bishop, rook, queen};
-    for (int p = 0; p < 5; ++p)
-        for (int sq = 0; sq < 64; ++sq) params[PST + p * 64 + sq] = both(tables[p][sq]);
-    for (int sq = 0; sq < 64; ++sq) params[PST + Board::KING * 64 + sq] = {kingMG[sq], kingEG[sq]};
-
-    const int passed[8] = {0, 10, 15, 25, 40, 65, 100, 0};
-    for (int r = 0; r < 8; ++r) params[PASSED_PAWN + r] = both(passed[r]);
-
-    params[DOUBLED_PAWN] = both(-12);
-    params[ISOLATED_PAWN] = both(-10);
-    params[BISHOP_PAIR] = both(30);
-    params[ROOK_OPEN_FILE] = both(20);
-    params[ROOK_SEMI_OPEN_FILE] = both(10);
-    const int mobility[4] = {4, 3, 2, 1};
-    for (int p = 0; p < 4; ++p) params[MOBILITY + p] = both(mobility[p]);
-    params[SHELTER_CLOSE] = {10, 0};
-    params[SHELTER_FAR] = {5, 0};
-    params[KING_OPEN_FILE] = {-15, 0};
-    params[TEMPO] = {0, 0};
-
+    // Compiled defaults: src/evalDefaults.h, generated from a tuned params
+    // file by scripts/eval-defaults.ts.
+    std::copy(std::begin(EVAL_DEFAULTS), std::end(EVAL_DEFAULTS), params.begin());
     rebuildPieceSquare();
 }
 
@@ -447,81 +349,3 @@ std::string Evaluator::exportParameters() const {
     return out;
 }
 
-namespace {
-    // Texel sigmoid with the conventional scaling constant (K≈400 in cp units).
-    double tuneSigmoid(double eval) { return 1.0 / (1.0 + std::pow(10.0, -eval / 400.0)); }
-
-    struct TuningEntry { Board board; double result; };
-}
-
-bool Evaluator::tuneFromDataset(const std::string& datasetPath, const std::string& outputPath,
-                                int maxEpochs, const std::function<void(int, double)>& onEpoch) {
-    std::ifstream file(datasetPath);
-    if (!file.is_open()) return false;
-
-    std::vector<TuningEntry> dataset;
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        // Each line: "<fen fields> c9 \"<result>\"".
-        size_t c9 = line.find("c9 \"");
-        if (c9 == std::string::npos) continue;
-
-        std::string fen = line.substr(0, c9 - 1);
-        size_t rs = c9 + 4;
-        size_t re = line.find('"', rs);
-        std::string result_str = line.substr(rs, re - rs);
-
-        double result = 0.5;
-        if (result_str == "1.0" || result_str == "1-0") result = 1.0;
-        else if (result_str == "0.0" || result_str == "0-1") result = 0.0;
-
-        Board b;
-        b.loadFEN(fen);
-        dataset.push_back({b, result});
-    }
-    if (dataset.empty()) return false;
-
-    auto mse = [&]() {
-        double total = 0.0;
-        for (const auto& e : dataset) {
-            int ev = evaluate(e.board, Color::WHITE);
-            double diff = e.result - tuneSigmoid(static_cast<double>(ev));
-            total += diff * diff;
-        }
-        return total / static_cast<double>(dataset.size());
-    };
-
-    const int count = getParameterCount();
-    double best = mse();
-    if (onEpoch) onEpoch(0, best);
-
-    for (int epoch = 1; epoch <= maxEpochs; ++epoch) {
-        bool improved = false;
-        for (int p = 0; p < count; ++p) {
-            const int orig = getParameter(p);
-
-            setParameter(p, orig + 1);
-            const double plus = mse();
-            setParameter(p, orig - 1);
-            const double minus = mse();
-
-            if (plus < best && plus <= minus) {
-                setParameter(p, orig + 1);
-                best = plus; improved = true;
-            } else if (minus < best) {
-                setParameter(p, orig - 1);
-                best = minus; improved = true;
-            } else {
-                setParameter(p, orig);  // restore
-            }
-        }
-        if (onEpoch) onEpoch(epoch, best);
-        if (!improved) break;  // converged
-    }
-
-    std::ofstream out(outputPath);
-    if (!out.is_open()) return false;
-    out << exportParameters();
-    return true;
-}

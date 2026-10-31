@@ -15,3 +15,4 @@ eval_params.txt
 # SPRT work area: per-ref worktrees, builds, logs and PGNs (scripts/sprt.sh)
 /tools/sprt/
 /tools/datasets/
+/tools/tuning/

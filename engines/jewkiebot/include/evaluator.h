@@ -73,12 +73,15 @@ public:
     bool loadParametersFromFile(const std::string& path, std::string* error = nullptr);
     std::string exportParameters() const;   // header line + one value per line
 
-    // Texel tuning against an EPD dataset (each line a FEN followed by
-    // c9 "<result>", result in {1.0,0.5,0.0} or PGN tokens). Mutates this
-    // evaluator toward the params that minimise sigmoid MSE, writes them to
-    // outputPath (params-file format), and calls onEpoch(epoch, mse) each pass
-    // (epoch 0 = initial). Returns false on a missing/empty dataset or write
-    // failure. Stops early when an epoch yields no improvement.
+    // Texel tuning (src/tuner.cpp) against an EPD dataset: each line a FEN
+    // followed by c9 "<result>", as 1-0/0-1/1/2-1/2 or 1.0/0.5/0.0. Fits the
+    // sigmoid scale K, then runs up to maxEpochs full-batch Adam steps on the
+    // traces, holding out every tenth position. Keeps the parameters with the
+    // best validation error, applies them to this evaluator, and writes them
+    // to outputPath (params-file format). Calls onEpoch(epoch, training mse)
+    // at epoch 0 and every 50 epochs, and prints "info string tune: ..." lines.
+    // Stops early once validation error hasn't improved for 300 epochs.
+    // Returns false on a missing/empty dataset or a write failure.
     bool tuneFromDataset(const std::string& datasetPath, const std::string& outputPath,
                          int maxEpochs, const std::function<void(int, double)>& onEpoch);
 
